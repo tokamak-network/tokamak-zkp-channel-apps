@@ -1,0 +1,16 @@
+import { contextBridge, ipcRenderer } from "electron";
+
+contextBridge.exposeInMainWorld("electronAPI", {
+  uploadFile: () => ipcRenderer.invoke("upload-file"),
+  saveFile: (fileName: string, content: Buffer) =>
+    ipcRenderer.invoke("save-file", fileName, content),
+  executeBinary: (command: string[]) =>
+    ipcRenderer.invoke("execute-binary", command),
+  onBinaryStdout: (callback: (data: string) => void) => {
+    ipcRenderer.on("binary-stdout", (_, data) => callback(data));
+  },
+  onBinaryStderr: (callback: (data: string) => void) => {
+    ipcRenderer.on("binary-stderr", (_, data) => callback(data));
+  },
+});
+
