@@ -14,5 +14,21 @@ export default defineConfig({
   },
   publicDir: "public",
   base: "./",
+  server: {
+    proxy: {
+      // Proxy RPC requests to avoid CORS in dev mode
+      '/rpc': {
+        target: 'https://sepolia.infura.io',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/rpc/, ''),
+        configure: (proxy, options) => {
+          proxy.on('proxyReq', (proxyReq, req, res) => {
+            // Add necessary headers
+            proxyReq.setHeader('Content-Type', 'application/json');
+          });
+        },
+      },
+    },
+  },
 });
 

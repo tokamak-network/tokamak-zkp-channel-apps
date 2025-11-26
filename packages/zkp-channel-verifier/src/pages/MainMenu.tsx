@@ -1,6 +1,6 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
-import { CheckCircle2, Plus, Info } from "lucide-react";
+import { CheckCircle2, Plus, Info, Settings } from "lucide-react";
 import Layout from "@/components/Layout";
 
 const MainMenu: React.FC = () => {
@@ -10,6 +10,20 @@ const MainMenu: React.FC = () => {
     <Layout>
       <div className="p-4 pb-20 flex justify-center">
         <div className="max-w-7xl w-full" style={{ marginTop: "40px" }}>
+          {/* Settings Button - Top Right */}
+          <div className="flex justify-end" style={{ marginBottom: "24px" }}>
+            <button
+              onClick={() => navigate("/settings")}
+              className="flex items-center bg-[#1a2347] hover:bg-[#4fc3f7]/20 border border-[#4fc3f7]/30 hover:border-[#4fc3f7] text-gray-300 hover:text-[#4fc3f7] rounded transition-all"
+              style={{ padding: "10px 20px", gap: "8px" }}
+            >
+              <Settings className="w-5 h-5" />
+              <span style={{ fontSize: "15px", fontWeight: "500" }}>
+                Settings
+              </span>
+            </button>
+          </div>
+
           {/* Welcome Header */}
           <div style={{ marginBottom: "64px" }}>
             <div className="text-center">
@@ -34,41 +48,6 @@ const MainMenu: React.FC = () => {
               className="grid grid-cols-1 md:grid-cols-2"
               style={{ gap: "48px" }}
             >
-              {/* Verify Proof Card */}
-              <button
-                onClick={() => navigate("/verify")}
-                className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border border-[#4fc3f7]/30 hover:border-[#4fc3f7] transition-all hover:shadow-lg hover:shadow-[#4fc3f7]/20 cursor-pointer group text-left"
-                style={{ padding: "32px" }}
-              >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    marginBottom: "24px",
-                  }}
-                >
-                  <span
-                    className="font-medium text-gray-300"
-                    style={{ fontSize: "24px" }}
-                  >
-                    Verify Proof
-                  </span>
-                  <div
-                    className="bg-[#4fc3f7] rounded group-hover:bg-[#029bee] transition-all"
-                    style={{ padding: "16px" }}
-                  >
-                    <CheckCircle2
-                      style={{ width: "32px", height: "32px" }}
-                      className="text-white"
-                    />
-                  </div>
-                </div>
-                <div className="text-gray-400" style={{ fontSize: "16px" }}>
-                  Verify intermediate proof with EVM state files
-                </div>
-              </button>
-
               {/* Generate Proof Card */}
               <button
                 onClick={() => navigate("/generate")}
@@ -103,13 +82,48 @@ const MainMenu: React.FC = () => {
                   Create new proof based on latest channel state
                 </div>
               </button>
+
+              {/* Verify Proof Card */}
+              <button
+                onClick={() => navigate("/verify")}
+                className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border border-[#4fc3f7]/30 hover:border-[#4fc3f7] transition-all hover:shadow-lg hover:shadow-[#4fc3f7]/20 cursor-pointer group text-left"
+                style={{ padding: "32px" }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    marginBottom: "24px",
+                  }}
+                >
+                  <span
+                    className="font-medium text-gray-300"
+                    style={{ fontSize: "24px" }}
+                  >
+                    Verify Proof
+                  </span>
+                  <div
+                    className="bg-[#4fc3f7] rounded group-hover:bg-[#029bee] transition-all"
+                    style={{ padding: "16px" }}
+                  >
+                    <CheckCircle2
+                      style={{ width: "32px", height: "32px" }}
+                      className="text-white"
+                    />
+                  </div>
+                </div>
+                <div className="text-gray-400" style={{ fontSize: "16px" }}>
+                  Verify intermediate proof with EVM state files
+                </div>
+              </button>
             </div>
           </div>
 
           {/* System Overview Section */}
           <div
             className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border border-[#4fc3f7] shadow-lg shadow-[#4fc3f7]/20"
-            style={{ padding: "48px" }}
+            style={{ padding: "48px", marginBottom: "64px" }}
           >
             <div style={{ marginBottom: "24px", textAlign: "center" }}>
               <h3

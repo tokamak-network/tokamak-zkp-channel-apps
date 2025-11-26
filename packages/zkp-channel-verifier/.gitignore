@@ -136,16 +136,10 @@ out/
 # DS_Store
 .DS_Store
 
-# ZKP Binaries - ignore everything first
-src/binaries/*
-
-# Then allow specific files
-!src/binaries/*.sh
-!src/binaries/README.md
-!src/binaries/resource/
-
-# But ignore subdirectories in resource
-src/binaries/resource/*/
+# ZKP Binaries - ignore compiled binaries and libraries
+src/binaries/bin/
+src/binaries/backend-lib/
+src/binaries/resource/
 
 # Native Libraries
 *.so

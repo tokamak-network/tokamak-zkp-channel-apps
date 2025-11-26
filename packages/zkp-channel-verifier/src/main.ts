@@ -6,6 +6,7 @@ import {
   Menu,
   MenuItemConstructorOptions,
   shell,
+  session,
 } from "electron";
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
@@ -216,6 +217,29 @@ function setupIpcHandlers() {
 
 app.whenReady().then(async () => {
   console.log("App ready, creating window...");
+  
+  // Configure session to allow external API requests
+  const defaultSession = session.defaultSession;
+  
+  // Set proper headers for all requests
+  defaultSession.webRequest.onBeforeSendHeaders((details, callback) => {
+    const { requestHeaders } = details;
+    
+    // Add necessary headers for RPC requests
+    if (details.url.includes('infura.io') || 
+        details.url.includes('alchemy.com') || 
+        details.url.includes('rpc.')) {
+      requestHeaders['Content-Type'] = 'application/json';
+      requestHeaders['Accept'] = 'application/json';
+      requestHeaders['Origin'] = 'electron://zkp-channel-verifier';
+    }
+    
+    callback({ requestHeaders });
+  });
+  
+  // Don't modify response headers - let the server handle CORS
+  // Adding CORS headers here causes duplicate '*, *' errors
+  
   setupIpcHandlers();
   createWindow();
 });
