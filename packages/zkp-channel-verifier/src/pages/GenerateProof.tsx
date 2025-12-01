@@ -20,7 +20,9 @@ const GenerateProof: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationComplete, setGenerationComplete] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
-  const [outputZipPath, setOutputZipPath] = useState<string | null>(null);
+  // TODO: Restore ZIP download functionality later
+  // const [outputZipPath, setOutputZipPath] = useState<string | null>(null);
+  const [newStateSnapshot, setNewStateSnapshot] = useState<string | null>(null); // For development: direct state_snapshot.json download
 
   // 온체인 데이터
   const [channelId, setChannelId] = useState<string>("1"); // 채널 ID (설정이나 입력으로 받아야 함)
@@ -92,15 +94,23 @@ const GenerateProof: React.FC = () => {
     try {
       const result = await window.electronAPI.uploadFile();
       if (result) {
+        // Decode base64 content
+        const jsonContent = Buffer.from(result.content, 'base64').toString('utf-8');
+        
         setStateFile({
           name: result.filePath.split("/").pop() || "unknown",
           path: result.filePath,
-          content: result.content,
+          content: jsonContent, // Store as plain JSON string
         });
         setGenerationComplete(false);
         setLogs([]);
+        
+        console.log("State file uploaded:", {
+          name: result.filePath.split("/").pop(),
+          size: jsonContent.length,
+        });
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("File upload failed:", error);
       setLogs((prev) => [
         ...prev,
@@ -125,61 +135,110 @@ const GenerateProof: React.FC = () => {
     ]);
 
     try {
-      // Setup stdout/stderr listeners
-      window.electronAPI.onBinaryStdout((data: string) => {
-        setLogs((prev) => [...prev, `> ${data.trim()}`]);
+      // Setup listeners for real-time logs
+      window.electronAPI.onStatusUpdate((status: string) => {
+        setLogs((prev) => [...prev, `ℹ️  ${status}`]);
       });
 
-      window.electronAPI.onBinaryStderr((data: string) => {
-        setLogs((prev) => [...prev, `⚠️ ${data.trim()}`]);
+      window.electronAPI.onProverStdout((data: string) => {
+        const lines = data.trim().split('\n');
+        setLogs((prev) => [...prev, ...lines.map(line => `[Prover] ${line}`)]);
       });
 
-      // Execute proof generation binary (placeholder command)
-      // 실제로는 src/binaries/4_run-prove.sh 등을 실행
-      const result = await window.electronAPI.executeBinary([
-        "bash",
-        "-c",
-        `echo "Generating proof..." && sleep 3 && echo "Proof generation complete" && exit 0`,
-      ]);
+      window.electronAPI.onProverStderr((data: string) => {
+        const lines = data.trim().split('\n');
+        setLogs((prev) => [...prev, ...lines.map(line => `⚠️  [Prover] ${line}`)]);
+      });
 
+      window.electronAPI.onVerifierStdout((data: string) => {
+        const lines = data.trim().split('\n');
+        setLogs((prev) => [...prev, ...lines.map(line => `[Verifier] ${line}`)]);
+      });
+
+      // Execute full synthesis and proof generation
+      const result = await window.electronAPI.synthesizeAndProve({
+        rpcUrl: "https://eth-sepolia.g.alchemy.com/v2/PbqCcGx1oHN7yNaFdUJUYqPEN0QSp23S",
+        contractAddress: "0xa30fe40285B8f5c0457DbC3B7C8A280373c40044", // TON on Sepolia
+        recipientAddress,
+        amount,
+        previousStateJson: stateFile.content, // Base64 decoded JSON string
+        channelParticipants: channelParticipants.map(p => p.address),
+        senderIndex: 0, // First participant is sender
+      });
+
+      if (result.success && result.verified) {
+        setLogs((prev) => [
+          ...prev,
+          "✅ Proof generation completed!",
+          "✅ Verification PASSED!",
+          `📄 New state root: ${result.newStateSnapshot ? JSON.parse(result.newStateSnapshot).stateRoot : 'N/A'}`,
+        ]);
+
+        // TODO: Restore ZIP download functionality later
+        // setLogs((prev) => [...prev, "📦 Compressing result files..."]);
+        // setOutputZipPath(result.files.proof);
+        // setLogs((prev) => [...prev, "✅ Compression complete! File is ready for download."]);
+
+        // For development: Save new state snapshot for direct download
+        if (result.newStateSnapshot) {
+          setNewStateSnapshot(result.newStateSnapshot);
+          setLogs((prev) => [...prev, "✅ New state snapshot ready for download."]);
+        }
+        setGenerationComplete(true);
+      } else {
+        throw new Error(result.error || "Verification failed");
+      }
+    } catch (error: any) {
       setLogs((prev) => [
         ...prev,
-        "✅ Proof generation completed.",
-        "📦 Compressing result files...",
-      ]);
-
-      // Simulate creating output zip
-      setOutputZipPath("/tmp/proof_output.zip");
-      setLogs((prev) => [...prev, "✅ Compression complete! File is ready for download."]);
-      setGenerationComplete(true);
-    } catch (error) {
-      setLogs((prev) => [
-        ...prev,
-        `❌ Proof generation failed: ${error.message}`,
+        `❌ Proof generation failed: ${error.message || error}`,
       ]);
     } finally {
       setIsGenerating(false);
     }
   };
 
-  const handleDownload = async () => {
-    if (!outputZipPath) return;
+  // TODO: Restore ZIP download functionality later
+  // const handleDownload = async () => {
+  //   if (!outputZipPath) return;
+
+  //   try {
+  //     // Read the output file and trigger save dialog
+  //     const content = Buffer.from("sample proof data"); // In production, read actual file
+  //     const result = await window.electronAPI.saveFile(
+  //       "proof_output.zip",
+  //       content
+  //     );
+
+  //     if (result.success) {
+  //       setLogs((prev) => [
+  //         ...prev,
+  //         `✅ File saved: ${result.filePath}`,
+  //       ]);
+  //     }
+  //   } catch (error) {
+  //     setLogs((prev) => [...prev, `❌ File save failed: ${error.message}`]);
+  //   }
+  // };
+
+  // For development: Download state_snapshot.json directly
+  const handleDownloadStateSnapshot = async () => {
+    if (!newStateSnapshot) return;
 
     try {
-      // Read the output file and trigger save dialog
-      const content = Buffer.from("sample proof data"); // In production, read actual file
+      const content = Buffer.from(newStateSnapshot, 'utf-8');
       const result = await window.electronAPI.saveFile(
-        "proof_output.zip",
+        "state_snapshot.json",
         content
       );
 
       if (result.success) {
         setLogs((prev) => [
           ...prev,
-          `✅ File saved: ${result.filePath}`,
+          `✅ State snapshot saved: ${result.filePath}`,
         ]);
       }
-    } catch (error) {
+    } catch (error: any) {
       setLogs((prev) => [...prev, `❌ File save failed: ${error.message}`]);
     }
   };
@@ -492,7 +551,8 @@ const GenerateProof: React.FC = () => {
         )}
 
           {/* Download Section */}
-          {generationComplete && outputZipPath && (
+          {/* TODO: Restore ZIP download functionality later */}
+          {/* {generationComplete && outputZipPath && (
             <div className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border-2 border-green-500" style={{ padding: "40px", marginBottom: "48px" }}>
               <div className="flex items-start" style={{ gap: "16px" }}>
               <div className="bg-green-500 p-3 rounded">
@@ -512,6 +572,33 @@ const GenerateProof: React.FC = () => {
             </button>
                 <p className="text-gray-400 text-xs mt-4">
                   Upload this file in your browser to submit the proof on-chain
+                </p>
+              </div>
+            </div>
+            </div>
+          )} */}
+
+          {/* Development: Direct state_snapshot.json download */}
+          {generationComplete && newStateSnapshot && (
+            <div className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border-2 border-green-500" style={{ padding: "40px", marginBottom: "48px" }}>
+              <div className="flex items-start" style={{ gap: "16px" }}>
+              <div className="bg-green-500 p-3 rounded">
+                <Check className="w-8 h-8 text-white" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-xl font-bold text-white mb-2">Generation Complete</h3>
+                <p className="text-sm text-green-300 mb-6">
+                  Your proof has been successfully generated and verified.
+            </p>
+            <button
+              onClick={handleDownloadStateSnapshot}
+                  className="px-6 py-3 bg-green-500 hover:bg-green-600 text-white font-semibold transition-all flex items-center gap-2"
+            >
+                  <Download className="w-5 h-5" />
+                  Download State Snapshot (JSON)
+            </button>
+                <p className="text-gray-400 text-xs mt-4">
+                  This state snapshot can be used as previousState for the next transaction
                 </p>
               </div>
             </div>
