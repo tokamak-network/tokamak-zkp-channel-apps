@@ -1,11 +1,6 @@
 export interface SynthesizeAndProveOptions {
-  rpcUrl: string;
-  contractAddress: string;
-  recipientAddress: string;
-  amount: string;
-  previousStateJson?: string; // JSON string of state_snapshot.json
-  channelParticipants: string[]; // Array of L1 addresses
-  senderIndex?: number; // Index of sender in participants (default: 0)
+  synthesizerOutputDir: string; // Path to directory containing instance.json, placementVariables.json, permutation.json
+  proveOutputDir?: string; // Optional: where to save proof files
 }
 
 export interface SynthesizeAndProveResult {
@@ -27,7 +22,10 @@ export interface SynthesizeAndProveResult {
 export interface ElectronAPI {
   uploadFile: () => Promise<{
     filePath: string;
-    content: string;
+    content?: string; // For JSON files
+    extractedDir?: string; // For ZIP files
+    stateSnapshot?: string; // JSON string of state_snapshot.json from ZIP
+    isZip: boolean;
   } | null>;
   saveFile: (
     fileName: string,

@@ -1,13 +1,30 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+import {
+  Plus,
+  Zap,
+  Info,
+  FileText,
+  Users,
+  Coins,
+  AlertTriangle,
+  ArrowLeft,
+  Check,
+  Download,
+  RefreshCw,
+} from "lucide-react";
 import Layout from "@/components/Layout";
-import { Plus, Zap, Info, FileText, Users, Coins, AlertTriangle, ArrowLeft, Check, Download, RefreshCw } from "lucide-react";
-import { getChannelParticipants, getChannelAllowedTokens, getTokenSymbol } from "@/contracts/RollupBridgeCore";
+import {
+  getChannelParticipants,
+  getChannelAllowedTokens,
+  getTokenSymbol,
+} from "@/contracts/RollupBridgeCore";
 
 interface UploadedFile {
   name: string;
   path: string;
   content: string;
+  isZip?: boolean; // true if this is a ZIP file (path points to extracted directory)
 }
 
 const GenerateProof: React.FC = () => {
@@ -26,21 +43,33 @@ const GenerateProof: React.FC = () => {
 
   // 온체인 데이터
   const [channelId, setChannelId] = useState<string>("1"); // 채널 ID (설정이나 입력으로 받아야 함)
-  const [supportedTokens, setSupportedTokens] = useState<string[]>(["ETH", "WTON", "USDT"]); // 기본 토큰 목록
-  const [channelParticipants, setChannelParticipants] = useState<{ address: string; label: string }[]>([
-    { address: "0x1234567890123456789012345678901234567890", label: "Participant 1" },
-    { address: "0x9876543210987654321098765432109876543210", label: "Participant 2" },
+  const [supportedTokens, setSupportedTokens] = useState<string[]>([
+    "ETH",
+    "WTON",
+    "USDT",
+  ]); // 기본 토큰 목록
+  const [channelParticipants, setChannelParticipants] = useState<
+    { address: string; label: string }[]
+  >([
+    {
+      address: "0x1234567890123456789012345678901234567890",
+      label: "Participant 1",
+    },
+    {
+      address: "0x9876543210987654321098765432109876543210",
+      label: "Participant 2",
+    },
   ]);
   const [isLoadingChannelData, setIsLoadingChannelData] = useState(false);
 
   // 채널 데이터를 온체인에서 가져오는 함수
   const fetchChannelData = async () => {
     if (!channelId) return;
-    
+
     setIsLoadingChannelData(true);
     try {
       const channelIdBigInt = BigInt(channelId);
-      
+
       // 참여자 목록 가져오기
       const participants = await getChannelParticipants(channelIdBigInt);
       setChannelParticipants(
@@ -54,30 +83,39 @@ const GenerateProof: React.FC = () => {
       const tokens = await getChannelAllowedTokens(channelIdBigInt);
       const tokenSymbols = tokens.map(getTokenSymbol);
       setSupportedTokens(tokenSymbols);
-      
+
       // 첫 번째 토큰을 기본 선택
       if (tokenSymbols.length > 0 && !selectedToken) {
         setSelectedToken(tokenSymbols[0]);
       }
 
-      setLogs(prev => [
+      setLogs((prev) => [
         ...prev,
         `✅ Channel ${channelId} data loaded`,
         `👥 ${participants.length} participants`,
         `🪙 ${tokenSymbols.length} supported tokens`,
       ]);
-    } catch (error) {
-      console.error('Failed to fetch channel data:', error);
-      setLogs(prev => [
+    } catch (error: any) {
+      console.error("Failed to fetch channel data:", error);
+      setLogs((prev) => [
         ...prev,
-        `❌ Failed to load channel data: ${error.message}`,
+        `❌ Failed to load channel data: ${error?.message || String(error)}`,
       ]);
       // Fallback to demo data
       setSupportedTokens(["ETH", "WTON", "USDT"]);
       setChannelParticipants([
-        { address: "0x1234567890123456789012345678901234567890", label: "Participant 1" },
-        { address: "0x9876543210987654321098765432109876543210", label: "Participant 2" },
-        { address: "0xabcdef1234567890abcdef1234567890abcdef12", label: "Participant 3" },
+        {
+          address: "0x1234567890123456789012345678901234567890",
+          label: "Participant 1",
+        },
+        {
+          address: "0x9876543210987654321098765432109876543210",
+          label: "Participant 2",
+        },
+        {
+          address: "0xabcdef1234567890abcdef1234567890abcdef12",
+          label: "Participant 3",
+        },
       ]);
       if (!selectedToken) setSelectedToken("ETH");
     } finally {
@@ -94,28 +132,66 @@ const GenerateProof: React.FC = () => {
     try {
       const result = await window.electronAPI.uploadFile();
       if (result) {
-        // Decode base64 content
-        const jsonContent = Buffer.from(result.content, 'base64').toString('utf-8');
-        
-        setStateFile({
-          name: result.filePath.split("/").pop() || "unknown",
-          path: result.filePath,
-          content: jsonContent, // Store as plain JSON string
-        });
+        if (result.isZip) {
+          // ZIP file: extracted directory path is provided
+          if (!result.extractedDir) {
+            throw new Error(
+              "ZIP file extraction failed: extracted directory not found"
+            );
+          }
+
+          // Display state_snapshot.json info if available
+          let stateInfo = "";
+          if (result.stateSnapshot) {
+            try {
+              const state = JSON.parse(result.stateSnapshot);
+              stateInfo = `📄 State snapshot found: root=${state.stateRoot?.substring(0, 16)}...`;
+            } catch (e) {
+              stateInfo = "📄 State snapshot found (unable to parse)";
+            }
+          }
+
+          setStateFile({
+            name: result.filePath.split("/").pop() || "unknown",
+            path: result.extractedDir,
+            content: result.stateSnapshot || "", // Store state_snapshot.json content if available
+            isZip: true,
+          });
+          setLogs((prev) => [
+            ...prev,
+            `📦 ZIP file extracted to: ${result.extractedDir}`,
+            stateInfo || "📄 No state_snapshot.json found in ZIP",
+            `✅ Ready to generate proof from extracted files`,
+          ]);
+        } else {
+          // JSON file: decode base64 content using atob (browser-compatible)
+          if (!result.content) {
+            throw new Error("JSON file content is missing");
+          }
+          const jsonContent = atob(result.content);
+
+          setStateFile({
+            name: result.filePath.split("/").pop() || "unknown",
+            path: result.filePath,
+            content: jsonContent, // Store as plain JSON string
+            isZip: false,
+          });
+          setLogs((prev) => [
+            ...prev,
+            `📄 JSON file loaded: ${result.filePath.split("/").pop()}`,
+          ]);
+        }
         setGenerationComplete(false);
-        setLogs([]);
-        
-        console.log("State file uploaded:", {
+
+        console.log("File uploaded:", {
           name: result.filePath.split("/").pop(),
-          size: jsonContent.length,
+          isZip: result.isZip,
+          extractedDir: result.extractedDir,
         });
       }
     } catch (error: any) {
       console.error("File upload failed:", error);
-      setLogs((prev) => [
-        ...prev,
-        `❌ File upload failed: ${error.message}`,
-      ]);
+      setLogs((prev) => [...prev, `❌ File upload failed: ${error.message}`]);
     }
   };
 
@@ -141,52 +217,53 @@ const GenerateProof: React.FC = () => {
       });
 
       window.electronAPI.onProverStdout((data: string) => {
-        const lines = data.trim().split('\n');
-        setLogs((prev) => [...prev, ...lines.map(line => `[Prover] ${line}`)]);
+        const lines = data.trim().split("\n");
+        setLogs((prev) => [
+          ...prev,
+          ...lines.map((line) => `[Prover] ${line}`),
+        ]);
       });
 
       window.electronAPI.onProverStderr((data: string) => {
-        const lines = data.trim().split('\n');
-        setLogs((prev) => [...prev, ...lines.map(line => `⚠️  [Prover] ${line}`)]);
+        const lines = data.trim().split("\n");
+        setLogs((prev) => [
+          ...prev,
+          ...lines.map((line) => `⚠️  [Prover] ${line}`),
+        ]);
       });
 
       window.electronAPI.onVerifierStdout((data: string) => {
-        const lines = data.trim().split('\n');
-        setLogs((prev) => [...prev, ...lines.map(line => `[Verifier] ${line}`)]);
-      });
-
-      // Execute full synthesis and proof generation
-      const result = await window.electronAPI.synthesizeAndProve({
-        rpcUrl: "https://eth-sepolia.g.alchemy.com/v2/PbqCcGx1oHN7yNaFdUJUYqPEN0QSp23S",
-        contractAddress: "0xa30fe40285B8f5c0457DbC3B7C8A280373c40044", // TON on Sepolia
-        recipientAddress,
-        amount,
-        previousStateJson: stateFile.content, // Base64 decoded JSON string
-        channelParticipants: channelParticipants.map(p => p.address),
-        senderIndex: 0, // First participant is sender
-      });
-
-      if (result.success && result.verified) {
+        const lines = data.trim().split("\n");
         setLogs((prev) => [
           ...prev,
-          "✅ Proof generation completed!",
-          "✅ Verification PASSED!",
-          `📄 New state root: ${result.newStateSnapshot ? JSON.parse(result.newStateSnapshot).stateRoot : 'N/A'}`,
+          ...lines.map((line) => `[Verifier] ${line}`),
         ]);
+      });
 
-        // TODO: Restore ZIP download functionality later
-        // setLogs((prev) => [...prev, "📦 Compressing result files..."]);
-        // setOutputZipPath(result.files.proof);
-        // setLogs((prev) => [...prev, "✅ Compression complete! File is ready for download."]);
+      // Execute proof generation
+      // If ZIP file, use extracted directory as synthesizerOutputDir
+      // If JSON file, we need to handle it differently (not supported yet for binary-only mode)
+      if (stateFile.isZip) {
+        // ZIP file: use extracted directory directly
+        const result = await window.electronAPI.synthesizeAndProve({
+          synthesizerOutputDir: stateFile.path, // Extracted directory path
+        });
 
-        // For development: Save new state snapshot for direct download
-        if (result.newStateSnapshot) {
-          setNewStateSnapshot(result.newStateSnapshot);
-          setLogs((prev) => [...prev, "✅ New state snapshot ready for download."]);
+        if (result.success && result.verified) {
+          setLogs((prev) => [
+            ...prev,
+            "✅ Proof generation completed!",
+            "✅ Verification PASSED!",
+          ]);
+          setGenerationComplete(true);
+        } else {
+          throw new Error(result.error || "Verification failed");
         }
-        setGenerationComplete(true);
       } else {
-        throw new Error(result.error || "Verification failed");
+        // JSON file: not supported in binary-only mode
+        throw new Error(
+          "JSON file upload is not supported. Please upload a ZIP file containing Synthesizer output files."
+        );
       }
     } catch (error: any) {
       setLogs((prev) => [
@@ -226,7 +303,7 @@ const GenerateProof: React.FC = () => {
     if (!newStateSnapshot) return;
 
     try {
-      const content = Buffer.from(newStateSnapshot, 'utf-8');
+      const content = Buffer.from(newStateSnapshot, "utf-8");
       const result = await window.electronAPI.saveFile(
         "state_snapshot.json",
         content
@@ -257,30 +334,42 @@ const GenerateProof: React.FC = () => {
             <span className="text-sm">Back to Menu</span>
           </button>
 
-          <div className="flex items-center" style={{ gap: "16px", marginBottom: "48px" }}>
+          <div
+            className="flex items-center"
+            style={{ gap: "16px", marginBottom: "48px" }}
+          >
             <div className="bg-[#4fc3f7] p-3 rounded">
               <Plus className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-white">
-                Generate Proof
-              </h1>
+              <h1 className="text-2xl font-bold text-white">Generate Proof</h1>
               <p className="text-sm text-gray-400">
-                Create new proofs based on your channel state and transaction details.
+                Create new proofs based on your channel state and transaction
+                details.
               </p>
             </div>
           </div>
 
           {/* Generation Overview (통합) */}
-          <div className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border border-[#4fc3f7] shadow-lg shadow-[#4fc3f7]/20" style={{ padding: "24px", marginBottom: "48px" }}>
-            <div className="flex items-center justify-between" style={{ marginBottom: "16px" }}>
+          <div
+            className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border border-[#4fc3f7] shadow-lg shadow-[#4fc3f7]/20"
+            style={{ padding: "24px", marginBottom: "48px" }}
+          >
+            <div
+              className="flex items-center justify-between"
+              style={{ marginBottom: "16px" }}
+            >
               <div className="flex items-center" style={{ gap: "12px" }}>
                 <div className="bg-[#4fc3f7] p-2 rounded">
                   <Zap className="w-5 h-5 text-white" />
                 </div>
                 <div>
-                  <h2 className="text-lg font-bold text-white">Generation Overview</h2>
-                  <p className="text-sm text-gray-400">Current generation status and requirements</p>
+                  <h2 className="text-lg font-bold text-white">
+                    Generation Overview
+                  </h2>
+                  <p className="text-sm text-gray-400">
+                    Current generation status and requirements
+                  </p>
                 </div>
               </div>
               <button
@@ -289,14 +378,19 @@ const GenerateProof: React.FC = () => {
                 className="flex items-center bg-[#4fc3f7] hover:bg-[#029bee] text-white rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ padding: "8px 16px", gap: "8px", fontSize: "14px" }}
               >
-                <RefreshCw className={`w-4 h-4 ${isLoadingChannelData ? 'animate-spin' : ''}`} />
+                <RefreshCw
+                  className={`w-4 h-4 ${isLoadingChannelData ? "animate-spin" : ""}`}
+                />
                 Refresh Data
               </button>
             </div>
 
             {/* Channel ID Input */}
             <div style={{ marginBottom: "20px" }}>
-              <label className="block font-medium text-gray-300" style={{ fontSize: "14px", marginBottom: "8px" }}>
+              <label
+                className="block font-medium text-gray-300"
+                style={{ fontSize: "14px", marginBottom: "8px" }}
+              >
                 Channel ID
               </label>
               <input
@@ -307,16 +401,28 @@ const GenerateProof: React.FC = () => {
                 className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all"
                 style={{ padding: "10px 14px", fontSize: "14px" }}
               />
-              <p className="text-gray-400" style={{ fontSize: "12px", marginTop: "4px" }}>
-                Enter the on-chain channel ID to load participants and supported tokens
+              <p
+                className="text-gray-400"
+                style={{ fontSize: "12px", marginTop: "4px" }}
+              >
+                Enter the on-chain channel ID to load participants and supported
+                tokens
               </p>
             </div>
 
             {/* Statistics Grid */}
             <div className="grid grid-cols-3" style={{ gap: "20px" }}>
-              <div className="bg-[#0a1930]/50 border border-[#4fc3f7]/20" style={{ padding: "16px", textAlign: "center" }}>
-                <div className="flex items-center justify-between" style={{ marginBottom: "8px" }}>
-                  <span className="text-xs font-medium text-gray-400">State File</span>
+              <div
+                className="bg-[#0a1930]/50 border border-[#4fc3f7]/20"
+                style={{ padding: "16px", textAlign: "center" }}
+              >
+                <div
+                  className="flex items-center justify-between"
+                  style={{ marginBottom: "8px" }}
+                >
+                  <span className="text-xs font-medium text-gray-400">
+                    State File
+                  </span>
                   <FileText className="w-4 h-4 text-[#4fc3f7]" />
                 </div>
                 <div className="text-xl font-bold text-white">
@@ -324,27 +430,51 @@ const GenerateProof: React.FC = () => {
                 </div>
               </div>
 
-              <div className="bg-[#0a1930]/50 border border-[#4fc3f7]/20" style={{ padding: "16px", textAlign: "center" }}>
-                <div className="flex items-center justify-between" style={{ marginBottom: "8px" }}>
-                  <span className="text-xs font-medium text-gray-400">Recipients</span>
+              <div
+                className="bg-[#0a1930]/50 border border-[#4fc3f7]/20"
+                style={{ padding: "16px", textAlign: "center" }}
+              >
+                <div
+                  className="flex items-center justify-between"
+                  style={{ marginBottom: "8px" }}
+                >
+                  <span className="text-xs font-medium text-gray-400">
+                    Recipients
+                  </span>
                   <Users className="w-4 h-4 text-[#4fc3f7]" />
                 </div>
-                <div className="text-xl font-bold text-white">{channelParticipants.length}</div>
+                <div className="text-xl font-bold text-white">
+                  {channelParticipants.length}
+                </div>
               </div>
 
-              <div className="bg-[#0a1930]/50 border border-[#4fc3f7]/20" style={{ padding: "16px", textAlign: "center" }}>
-                <div className="flex items-center justify-between" style={{ marginBottom: "8px" }}>
-                  <span className="text-xs font-medium text-gray-400">Supported Tokens</span>
+              <div
+                className="bg-[#0a1930]/50 border border-[#4fc3f7]/20"
+                style={{ padding: "16px", textAlign: "center" }}
+              >
+                <div
+                  className="flex items-center justify-between"
+                  style={{ marginBottom: "8px" }}
+                >
+                  <span className="text-xs font-medium text-gray-400">
+                    Supported Tokens
+                  </span>
                   <Coins className="w-4 h-4 text-[#4fc3f7]" />
                 </div>
-                <div className="flex flex-wrap justify-center" style={{ gap: "6px", marginTop: "6px" }}>
+                <div
+                  className="flex flex-wrap justify-center"
+                  style={{ gap: "6px", marginTop: "6px" }}
+                >
                   {supportedTokens.map((token) => (
                     <div
                       key={token}
                       className="bg-[#4fc3f7]/20 border border-[#4fc3f7]/50 rounded"
                       style={{ padding: "4px 10px" }}
                     >
-                      <span className="text-[#4fc3f7] font-bold" style={{ fontSize: "12px" }}>
+                      <span
+                        className="text-[#4fc3f7] font-bold"
+                        style={{ fontSize: "12px" }}
+                      >
                         {token}
                       </span>
                     </div>
@@ -355,200 +485,304 @@ const GenerateProof: React.FC = () => {
           </div>
 
           {/* Proof Generation Section */}
-          <div className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border border-[#4fc3f7] shadow-lg shadow-[#4fc3f7]/20" style={{ padding: "32px", marginBottom: "48px" }}>
-            <div className="flex items-center" style={{ gap: "12px", marginBottom: "24px" }}>
-            <div className="bg-[#4fc3f7] p-2 rounded">
-              <Plus className="w-5 h-5 text-white" />
-            </div>
-            <div>
-              <h2 className="text-lg font-bold text-white">Proof Generation</h2>
-              <p className="text-sm text-gray-400">Upload state file and enter transaction details</p>
-            </div>
-          </div>
-
-          <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-            {/* State File Upload */}
-            <div>
-              <label className="block font-medium text-gray-300" style={{ fontSize: "16px", marginBottom: "12px" }}>State File</label>
-              <button
-                onClick={handleStateUpload}
-                className="w-full border-2 border-dashed border-[#4fc3f7]/30 hover:border-[#4fc3f7] bg-[#0a1930]/50 text-gray-300 hover:text-[#4fc3f7] transition-all flex items-center justify-center"
-                style={{ padding: "24px", gap: "12px" }}
-              >
-                <FileText className="w-6 h-6" />
-                <span className="font-semibold" style={{ fontSize: "16px" }}>
-                  {stateFile ? "Change State File" : "Upload State File"}
-                </span>
-              </button>
-              {stateFile && (
-                <div className="bg-[#0a1930]/50 border border-[#4fc3f7]/30" style={{ marginTop: "12px", padding: "16px" }}>
-                  <div className="flex items-center" style={{ gap: "12px" }}>
-                    <div className="bg-green-500 rounded" style={{ padding: "8px" }}>
-                      <Check className="w-4 h-4 text-white" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-white font-medium truncate" style={{ fontSize: "15px", marginBottom: "4px" }}>{stateFile.name}</p>
-                      <p className="text-gray-400 font-mono truncate" style={{ fontSize: "13px" }}>{stateFile.path}</p>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Recipient Address */}
-            <div>
-              <div className="flex items-center justify-between" style={{ marginBottom: "12px" }}>
-                <label className="block font-medium text-gray-300" style={{ fontSize: "16px" }}>Recipient Address</label>
-                <div className="flex" style={{ gap: "8px" }}>
-                  <button
-                    onClick={() => {
-                      setInputMode("select");
-                      setRecipientAddress("");
-                    }}
-                    className={`transition-all ${
-                      inputMode === "select"
-                        ? "bg-[#4fc3f7] text-white"
-                        : "bg-[#0a1930] text-gray-400 border border-[#4fc3f7]/30 hover:border-[#4fc3f7]"
-                    }`}
-                    style={{ padding: "8px 16px", fontSize: "14px" }}
-                  >
-                    Select
-                  </button>
-                  <button
-                    onClick={() => {
-                      setInputMode("manual");
-                      setRecipientAddress("");
-                    }}
-                    className={`transition-all ${
-                      inputMode === "manual"
-                        ? "bg-[#4fc3f7] text-white"
-                        : "bg-[#0a1930] text-gray-400 border border-[#4fc3f7]/30 hover:border-[#4fc3f7]"
-                    }`}
-                    style={{ padding: "8px 16px", fontSize: "14px" }}
-                  >
-                    Manual
-                  </button>
-                </div>
+          <div
+            className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border border-[#4fc3f7] shadow-lg shadow-[#4fc3f7]/20"
+            style={{ padding: "32px", marginBottom: "48px" }}
+          >
+            <div
+              className="flex items-center"
+              style={{ gap: "12px", marginBottom: "24px" }}
+            >
+              <div className="bg-[#4fc3f7] p-2 rounded">
+                <Plus className="w-5 h-5 text-white" />
               </div>
-
-              {inputMode === "select" ? (
-                <select
-                  value={recipientAddress}
-                  onChange={(e) => setRecipientAddress(e.target.value)}
-                  className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all"
-                  style={{ padding: "14px 16px", fontSize: "15px" }}
-                >
-                  <option value="">Select a participant...</option>
-                  {channelParticipants.map((participant) => (
-                    <option key={participant.address} value={participant.address}>
-                      {participant.label} - {participant.address.slice(0, 10)}...{participant.address.slice(-8)}
-                    </option>
-                  ))}
-                </select>
-              ) : (
-              <input
-                type="text"
-                value={recipientAddress}
-                onChange={(e) => setRecipientAddress(e.target.value)}
-                placeholder="0x..."
-                  className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all font-mono"
-                  style={{ padding: "14px 16px", fontSize: "15px" }}
-              />
-              )}
-            </div>
-
-            {/* Token Selection */}
-            <div>
-              <label className="block font-medium text-gray-300" style={{ fontSize: "16px", marginBottom: "12px" }}>Select Token</label>
-              <div className="flex flex-wrap" style={{ gap: "12px" }}>
-                {supportedTokens.map((token) => (
-                  <button
-                    key={token}
-                    onClick={() => setSelectedToken(token)}
-                    className={`border-2 rounded transition-all ${
-                      selectedToken === token
-                        ? "bg-[#4fc3f7] border-[#4fc3f7] text-white"
-                        : "bg-[#0a1930] border-[#4fc3f7]/30 text-gray-400 hover:border-[#4fc3f7]"
-                    }`}
-                    style={{ padding: "12px 24px", fontSize: "15px", fontWeight: "600" }}
-                  >
-                    {token}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Transfer Amount */}
-            <div>
-              <label className="block font-medium text-gray-300" style={{ fontSize: "16px", marginBottom: "12px" }}>Transfer Amount</label>
-              <div className="relative">
-              <input
-                type="text"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                  placeholder={
-                    selectedToken === "ETH" ? "e.g., 1000000000000000000 (1 ETH in wei)" :
-                    selectedToken === "WTON" ? "e.g., 1000000000000000000000000000 (1 WTON in ray)" :
-                    "e.g., 1000000 (1 USDT in 6 decimals)"
-                  }
-                  className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all"
-                  style={{ padding: "14px 16px", paddingRight: "80px", fontSize: "15px" }}
-                />
-                <div className="absolute top-1/2 -translate-y-1/2 bg-[#4fc3f7]/20 rounded border border-[#4fc3f7]/30" style={{ right: "12px", padding: "8px 16px" }}>
-                  <span className="text-[#4fc3f7] font-semibold" style={{ fontSize: "15px" }}>{selectedToken}</span>
-                </div>
-              </div>
-              <div className="bg-yellow-500/10 border border-yellow-500/30 rounded" style={{ padding: "12px", marginTop: "8px" }}>
-                <p className="text-yellow-300 flex items-start" style={{ fontSize: "14px", gap: "6px" }}>
-                  <Info className="w-4 h-4" style={{ marginTop: "2px", flexShrink: 0 }} />
-                  <span>
-                    <strong>Enter amount in smallest unit:</strong>
-                    {selectedToken === "ETH" && " wei (1 ETH = 10^18 wei)"}
-                    {selectedToken === "WTON" && " ray (1 WTON = 10^27 ray)"}
-                    {(selectedToken === "USDT" || selectedToken === "USDC") && " 6 decimals (1 USDT = 10^6)"}
-                    {selectedToken !== "ETH" && selectedToken !== "WTON" && selectedToken !== "USDT" && selectedToken !== "USDC" && " smallest unit"}
-                  </span>
+              <div>
+                <h2 className="text-lg font-bold text-white">
+                  Proof Generation
+                </h2>
+                <p className="text-sm text-gray-400">
+                  Upload state file and enter transaction details
                 </p>
               </div>
             </div>
 
-            {/* Generate Proof Button */}
-            <div style={{ marginTop: "32px" }}>
-              <button
-                onClick={handleGenerate}
-                disabled={!stateFile || !recipientAddress || !amount || isGenerating}
-                className={`w-full flex items-center justify-center transition-all ${
-                  !stateFile || !recipientAddress || !amount || isGenerating
-                    ? "bg-[#0a1930]/50 border border-[#4fc3f7]/20 text-gray-500 cursor-not-allowed"
-                    : "bg-[#4fc3f7] hover:bg-[#029bee] border border-[#4fc3f7] text-white shadow-lg shadow-[#4fc3f7]/30"
-                }`}
-                style={{ padding: "16px 24px", fontSize: "16px", fontWeight: "600" }}
-              >
-                <div className="flex items-center" style={{ gap: "12px" }}>
-                  <Plus className="w-5 h-5" />
-                  <span>{isGenerating ? "Generating Proof..." : "Generate Proof"}</span>
-                  {!isGenerating && stateFile && recipientAddress && amount && (
-                    <Check className="w-5 h-5" />
-                  )}
+            <div
+              style={{ display: "flex", flexDirection: "column", gap: "24px" }}
+            >
+              {/* State File Upload */}
+              <div>
+                <label
+                  className="block font-medium text-gray-300"
+                  style={{ fontSize: "16px", marginBottom: "12px" }}
+                >
+                  State File
+                </label>
+                <button
+                  onClick={handleStateUpload}
+                  className="w-full border-2 border-dashed border-[#4fc3f7]/30 hover:border-[#4fc3f7] bg-[#0a1930]/50 text-gray-300 hover:text-[#4fc3f7] transition-all flex items-center justify-center"
+                  style={{ padding: "24px", gap: "12px" }}
+                >
+                  <FileText className="w-6 h-6" />
+                  <span className="font-semibold" style={{ fontSize: "16px" }}>
+                    {stateFile ? "Change State File" : "Upload State File"}
+                  </span>
+                </button>
+                {stateFile && (
+                  <div
+                    className="bg-[#0a1930]/50 border border-[#4fc3f7]/30"
+                    style={{ marginTop: "12px", padding: "16px" }}
+                  >
+                    <div className="flex items-center" style={{ gap: "12px" }}>
+                      <div
+                        className="bg-green-500 rounded"
+                        style={{ padding: "8px" }}
+                      >
+                        <Check className="w-4 h-4 text-white" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p
+                          className="text-white font-medium truncate"
+                          style={{ fontSize: "15px", marginBottom: "4px" }}
+                        >
+                          {stateFile.name}
+                        </p>
+                        <p
+                          className="text-gray-400 font-mono truncate"
+                          style={{ fontSize: "13px" }}
+                        >
+                          {stateFile.path}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* Recipient Address */}
+              <div>
+                <div
+                  className="flex items-center justify-between"
+                  style={{ marginBottom: "12px" }}
+                >
+                  <label
+                    className="block font-medium text-gray-300"
+                    style={{ fontSize: "16px" }}
+                  >
+                    Recipient Address
+                  </label>
+                  <div className="flex" style={{ gap: "8px" }}>
+                    <button
+                      onClick={() => {
+                        setInputMode("select");
+                        setRecipientAddress("");
+                      }}
+                      className={`transition-all ${
+                        inputMode === "select"
+                          ? "bg-[#4fc3f7] text-white"
+                          : "bg-[#0a1930] text-gray-400 border border-[#4fc3f7]/30 hover:border-[#4fc3f7]"
+                      }`}
+                      style={{ padding: "8px 16px", fontSize: "14px" }}
+                    >
+                      Select
+                    </button>
+                    <button
+                      onClick={() => {
+                        setInputMode("manual");
+                        setRecipientAddress("");
+                      }}
+                      className={`transition-all ${
+                        inputMode === "manual"
+                          ? "bg-[#4fc3f7] text-white"
+                          : "bg-[#0a1930] text-gray-400 border border-[#4fc3f7]/30 hover:border-[#4fc3f7]"
+                      }`}
+                      style={{ padding: "8px 16px", fontSize: "14px" }}
+                    >
+                      Manual
+                    </button>
+                  </div>
                 </div>
-              </button>
+
+                {inputMode === "select" ? (
+                  <select
+                    value={recipientAddress}
+                    onChange={(e) => setRecipientAddress(e.target.value)}
+                    className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all"
+                    style={{ padding: "14px 16px", fontSize: "15px" }}
+                  >
+                    <option value="">Select a participant...</option>
+                    {channelParticipants.map((participant) => (
+                      <option
+                        key={participant.address}
+                        value={participant.address}
+                      >
+                        {participant.label} - {participant.address.slice(0, 10)}
+                        ...{participant.address.slice(-8)}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={recipientAddress}
+                    onChange={(e) => setRecipientAddress(e.target.value)}
+                    placeholder="0x..."
+                    className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all font-mono"
+                    style={{ padding: "14px 16px", fontSize: "15px" }}
+                  />
+                )}
+              </div>
+
+              {/* Token Selection */}
+              <div>
+                <label
+                  className="block font-medium text-gray-300"
+                  style={{ fontSize: "16px", marginBottom: "12px" }}
+                >
+                  Select Token
+                </label>
+                <div className="flex flex-wrap" style={{ gap: "12px" }}>
+                  {supportedTokens.map((token) => (
+                    <button
+                      key={token}
+                      onClick={() => setSelectedToken(token)}
+                      className={`border-2 rounded transition-all ${
+                        selectedToken === token
+                          ? "bg-[#4fc3f7] border-[#4fc3f7] text-white"
+                          : "bg-[#0a1930] border-[#4fc3f7]/30 text-gray-400 hover:border-[#4fc3f7]"
+                      }`}
+                      style={{
+                        padding: "12px 24px",
+                        fontSize: "15px",
+                        fontWeight: "600",
+                      }}
+                    >
+                      {token}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Transfer Amount */}
+              <div>
+                <label
+                  className="block font-medium text-gray-300"
+                  style={{ fontSize: "16px", marginBottom: "12px" }}
+                >
+                  Transfer Amount
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={amount}
+                    onChange={(e) => setAmount(e.target.value)}
+                    placeholder={
+                      selectedToken === "ETH"
+                        ? "e.g., 1000000000000000000 (1 ETH in wei)"
+                        : selectedToken === "WTON"
+                          ? "e.g., 1000000000000000000000000000 (1 WTON in ray)"
+                          : "e.g., 1000000 (1 USDT in 6 decimals)"
+                    }
+                    className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all"
+                    style={{
+                      padding: "14px 16px",
+                      paddingRight: "80px",
+                      fontSize: "15px",
+                    }}
+                  />
+                  <div
+                    className="absolute top-1/2 -translate-y-1/2 bg-[#4fc3f7]/20 rounded border border-[#4fc3f7]/30"
+                    style={{ right: "12px", padding: "8px 16px" }}
+                  >
+                    <span
+                      className="text-[#4fc3f7] font-semibold"
+                      style={{ fontSize: "15px" }}
+                    >
+                      {selectedToken}
+                    </span>
+                  </div>
+                </div>
+                <div
+                  className="bg-yellow-500/10 border border-yellow-500/30 rounded"
+                  style={{ padding: "12px", marginTop: "8px" }}
+                >
+                  <p
+                    className="text-yellow-300 flex items-start"
+                    style={{ fontSize: "14px", gap: "6px" }}
+                  >
+                    <Info
+                      className="w-4 h-4"
+                      style={{ marginTop: "2px", flexShrink: 0 }}
+                    />
+                    <span>
+                      <strong>Enter amount in smallest unit:</strong>
+                      {selectedToken === "ETH" && " wei (1 ETH = 10^18 wei)"}
+                      {selectedToken === "WTON" && " ray (1 WTON = 10^27 ray)"}
+                      {(selectedToken === "USDT" || selectedToken === "USDC") &&
+                        " 6 decimals (1 USDT = 10^6)"}
+                      {selectedToken !== "ETH" &&
+                        selectedToken !== "WTON" &&
+                        selectedToken !== "USDT" &&
+                        selectedToken !== "USDC" &&
+                        " smallest unit"}
+                    </span>
+                  </p>
+                </div>
+              </div>
+
+              {/* Generate Proof Button */}
+              <div style={{ marginTop: "32px" }}>
+                <button
+                  onClick={handleGenerate}
+                  disabled={
+                    !stateFile || !recipientAddress || !amount || isGenerating
+                  }
+                  className={`w-full flex items-center justify-center transition-all ${
+                    !stateFile || !recipientAddress || !amount || isGenerating
+                      ? "bg-[#0a1930]/50 border border-[#4fc3f7]/20 text-gray-500 cursor-not-allowed"
+                      : "bg-[#4fc3f7] hover:bg-[#029bee] border border-[#4fc3f7] text-white shadow-lg shadow-[#4fc3f7]/30"
+                  }`}
+                  style={{
+                    padding: "16px 24px",
+                    fontSize: "16px",
+                    fontWeight: "600",
+                  }}
+                >
+                  <div className="flex items-center" style={{ gap: "12px" }}>
+                    <Plus className="w-5 h-5" />
+                    <span>
+                      {isGenerating ? "Generating Proof..." : "Generate Proof"}
+                    </span>
+                    {!isGenerating &&
+                      stateFile &&
+                      recipientAddress &&
+                      amount && <Check className="w-5 h-5" />}
+                  </div>
+                </button>
+              </div>
             </div>
           </div>
-        </div>
 
           {/* Logs Section */}
           {logs.length > 0 && (
-            <div className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border border-[#4fc3f7]/30" style={{ padding: "32px", marginBottom: "48px" }}>
-              <h3 className="text-lg font-semibold text-white" style={{ marginBottom: "16px" }}>Execution Logs</h3>
-            <div className="bg-black/50 border border-[#4fc3f7]/20 p-4 max-h-60 overflow-y-auto font-mono text-xs">
-              {logs.map((log, index) => (
-                <div key={index} className="text-gray-300 mb-1">
-                  {log}
-                </div>
-              ))}
+            <div
+              className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border border-[#4fc3f7]/30"
+              style={{ padding: "32px", marginBottom: "48px" }}
+            >
+              <h3
+                className="text-lg font-semibold text-white"
+                style={{ marginBottom: "16px" }}
+              >
+                Execution Logs
+              </h3>
+              <div className="bg-black/50 border border-[#4fc3f7]/20 p-4 max-h-60 overflow-y-auto font-mono text-xs">
+                {logs.map((log, index) => (
+                  <div key={index} className="text-gray-300 mb-1">
+                    {log}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
           {/* Download Section */}
           {/* TODO: Restore ZIP download functionality later */}
@@ -580,52 +814,71 @@ const GenerateProof: React.FC = () => {
 
           {/* Development: Direct state_snapshot.json download */}
           {generationComplete && newStateSnapshot && (
-            <div className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border-2 border-green-500" style={{ padding: "40px", marginBottom: "48px" }}>
-              <div className="flex items-start" style={{ gap: "16px" }}>
-              <div className="bg-green-500 p-3 rounded">
-                <Check className="w-8 h-8 text-white" />
-              </div>
-              <div className="flex-1">
-                <h3 className="text-xl font-bold text-white mb-2">Generation Complete</h3>
-                <p className="text-sm text-green-300 mb-6">
-                  Your proof has been successfully generated and verified.
-            </p>
-            <button
-              onClick={handleDownloadStateSnapshot}
-                  className="px-6 py-3 bg-green-500 hover:bg-green-600 text-white font-semibold transition-all flex items-center gap-2"
+            <div
+              className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border-2 border-green-500"
+              style={{ padding: "40px", marginBottom: "48px" }}
             >
-                  <Download className="w-5 h-5" />
-                  Download State Snapshot (JSON)
-            </button>
-                <p className="text-gray-400 text-xs mt-4">
-                  This state snapshot can be used as previousState for the next transaction
-                </p>
+              <div className="flex items-start" style={{ gap: "16px" }}>
+                <div className="bg-green-500 p-3 rounded">
+                  <Check className="w-8 h-8 text-white" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-xl font-bold text-white mb-2">
+                    Generation Complete
+                  </h3>
+                  <p className="text-sm text-green-300 mb-6">
+                    Your proof has been successfully generated and verified.
+                  </p>
+                  <button
+                    onClick={handleDownloadStateSnapshot}
+                    className="px-6 py-3 bg-green-500 hover:bg-green-600 text-white font-semibold transition-all flex items-center gap-2"
+                  >
+                    <Download className="w-5 h-5" />
+                    Download State Snapshot (JSON)
+                  </button>
+                  <p className="text-gray-400 text-xs mt-4">
+                    This state snapshot can be used as previousState for the
+                    next transaction
+                  </p>
+                </div>
               </div>
-            </div>
             </div>
           )}
 
           {/* Next Steps */}
-          <div className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border border-[#4fc3f7]/30" style={{ padding: "32px" }}>
-            <h3 className="text-lg font-semibold text-white" style={{ marginBottom: "16px" }}>Next Steps</h3>
-          <ul className="space-y-2 text-sm text-gray-300">
-            <li className="flex items-start gap-2">
-              <span className="text-[#4fc3f7] mt-1">•</span>
-              <span>Upload your state file from the channel</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="text-[#4fc3f7] mt-1">•</span>
-              <span>Enter the recipient address and transfer amount</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="text-[#4fc3f7] mt-1">•</span>
-              <span>Click "Generate Proof" to create a new proof for the transaction</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <span className="text-[#4fc3f7] mt-1">•</span>
-              <span>Download the generated proof ZIP file and submit it on-chain</span>
-            </li>
-          </ul>
+          <div
+            className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border border-[#4fc3f7]/30"
+            style={{ padding: "32px" }}
+          >
+            <h3
+              className="text-lg font-semibold text-white"
+              style={{ marginBottom: "16px" }}
+            >
+              Next Steps
+            </h3>
+            <ul className="space-y-2 text-sm text-gray-300">
+              <li className="flex items-start gap-2">
+                <span className="text-[#4fc3f7] mt-1">•</span>
+                <span>Upload your state file from the channel</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-[#4fc3f7] mt-1">•</span>
+                <span>Enter the recipient address and transfer amount</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-[#4fc3f7] mt-1">•</span>
+                <span>
+                  Click "Generate Proof" to create a new proof for the
+                  transaction
+                </span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-[#4fc3f7] mt-1">•</span>
+                <span>
+                  Download the generated proof ZIP file and submit it on-chain
+                </span>
+              </li>
+            </ul>
           </div>
         </div>
       </div>
@@ -634,4 +887,3 @@ const GenerateProof: React.FC = () => {
 };
 
 export default GenerateProof;
-

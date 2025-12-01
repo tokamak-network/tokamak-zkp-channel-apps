@@ -157,8 +157,36 @@ function setupIpcHandlers() {
       ],
     });
     if (filePaths.length > 0) {
-      const content = fs.readFileSync(filePaths[0]);
-      return { filePath: filePaths[0], content: content.toString("base64") };
+      const filePath = filePaths[0];
+      const isZip = filePath.toLowerCase().endsWith(".zip");
+
+      if (isZip) {
+        // Extract ZIP file to temporary directory
+        const { extractZip, readStateSnapshot } = await import(
+          "./synthesizer/zipHelper"
+        );
+        const extractedDir = await extractZip(filePath);
+
+        // Try to read state_snapshot.json if it exists
+        const stateSnapshot = readStateSnapshot(extractedDir);
+
+        return {
+          filePath,
+          extractedDir,
+          isZip: true,
+          stateSnapshot: stateSnapshot
+            ? JSON.stringify(stateSnapshot)
+            : undefined,
+        };
+      } else {
+        // For JSON files, return content as base64
+        const content = fs.readFileSync(filePath);
+        return {
+          filePath,
+          content: content.toString("base64"),
+          isZip: false,
+        };
+      }
     }
     return null;
   });
