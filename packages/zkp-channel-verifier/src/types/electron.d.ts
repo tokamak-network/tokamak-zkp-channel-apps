@@ -30,6 +30,15 @@ export interface ElectronAPI {
     success: boolean;
     verified?: boolean;
     newStateSnapshot?: string;
+    files?: {
+      synthesizer: {
+        instance: string;
+        placementVariables: string;
+        permutation: string;
+        stateSnapshot: string;
+      };
+      proof: string;
+    };
     error?: string;
   }>;
 
@@ -38,6 +47,19 @@ export interface ElectronAPI {
   onProverStdout: (callback: (data: string) => void) => void;
   onProverStderr: (callback: (data: string) => void) => void;
   onVerifierStdout: (callback: (data: string) => void) => void;
+
+  // Create ZIP file from proof files
+  createProofZip: (files: {
+    instance: string;
+    placementVariables: string;
+    permutation: string;
+    stateSnapshot: string;
+    proof: string;
+  }) => Promise<{
+    success: boolean;
+    zipBuffer?: string; // base64 encoded ZIP
+    error?: string;
+  }>;
 }
 
 declare global {

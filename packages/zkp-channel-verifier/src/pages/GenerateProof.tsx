@@ -43,9 +43,14 @@ const GenerateProof: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationComplete, setGenerationComplete] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
-  // TODO: Restore ZIP download functionality later
-  // const [outputZipPath, setOutputZipPath] = useState<string | null>(null);
-  const [newStateSnapshot, setNewStateSnapshot] = useState<string | null>(null); // For development: direct state_snapshot.json download
+  const [newStateSnapshot, setNewStateSnapshot] = useState<string | null>(null);
+  const [proofFiles, setProofFiles] = useState<{
+    instance: string;
+    placementVariables: string;
+    permutation: string;
+    stateSnapshot: string;
+    proof: string;
+  } | null>(null);
 
   // 온체인 데이터
   const [channelId, setChannelId] = useState<string>("8"); // 채널 ID (기본값: 8, Sepolia testnet)
@@ -358,6 +363,38 @@ const GenerateProof: React.FC = () => {
           setNewStateSnapshot(result.newStateSnapshot);
         }
 
+        // Store proof files for ZIP download
+        if (result.files) {
+          const filesToStore = {
+            instance: result.files.synthesizer.instance,
+            placementVariables: result.files.synthesizer.placementVariables,
+            permutation: result.files.synthesizer.permutation,
+            stateSnapshot: result.files.synthesizer.stateSnapshot,
+            proof: result.files.proof,
+          };
+
+          console.log(
+            "[GenerateProof] Storing proof files for download:",
+            filesToStore
+          );
+          setProofFiles(filesToStore);
+
+          setLogs((prev) => [
+            ...prev,
+            "📁 Proof files stored for download",
+            `   - Instance: ${result.files.synthesizer.instance}`,
+            `   - Proof: ${result.files.proof}`,
+          ]);
+        } else {
+          console.warn(
+            "[GenerateProof] No files in result, cannot store for download"
+          );
+          setLogs((prev) => [
+            ...prev,
+            "⚠️ Warning: No file paths returned from proof generation",
+          ]);
+        }
+
         setGenerationComplete(true);
       } else {
         throw new Error(result.error || "Verification failed");
@@ -395,25 +432,114 @@ const GenerateProof: React.FC = () => {
   //   }
   // };
 
-  // For development: Download state_snapshot.json directly
+  // Test function to set test data for download button
+  // Note: In production, proof files are created at:
+  // - Synthesizer outputs: resource/synthesizer/outputs/
+  // - Proof file: resource/prove/output/proof.json
+  const handleTestDownloadButton = () => {
+    console.log("[handleTestDownloadButton] Setting test data...");
+
+    // Use test output directory files for testing
+    // In production, these would be in:
+    // - .vite/binaries/resource/synthesizer/outputs/ (synthesizer files)
+    // - .vite/binaries/resource/prove/output/ (proof file)
+    const testOutputDir =
+      "/Users/son-yeongseong/Desktop/dev/tokamak-zkp-channel-apps/packages/zkp-channel-verifier/test-outputs/test-synthesizer";
+    // Proof is in resource/prove/output/
+    const testProofDir =
+      "/Users/son-yeongseong/Desktop/dev/tokamak-zkp-channel-apps/packages/zkp-channel-verifier/test-outputs/proof";
+
+    const testFiles = {
+      instance: `${testOutputDir}/instance.json`,
+      placementVariables: `${testOutputDir}/placementVariables.json`,
+      permutation: `${testOutputDir}/permutation.json`,
+      stateSnapshot: `${testOutputDir}/state_snapshot.json`,
+      proof: `${testProofDir}/proof.json`,
+    };
+
+    console.log("[handleTestDownloadButton] Test files:", testFiles);
+
+    setProofFiles(testFiles);
+    setGenerationComplete(true);
+    setLogs((prev) => [
+      ...prev,
+      "🧪 Test mode activated - Download button should now be visible",
+      `📁 Using test files from: ${testOutputDir}`,
+      `📁 Proof file from: ${testProofDir}`,
+      "⚠️ Note: Some files may not exist, but this tests the download functionality",
+    ]);
+  };
+
+  // Download proof files as ZIP
   const handleDownloadStateSnapshot = async () => {
-    if (!newStateSnapshot) return;
+    console.log("[handleDownloadStateSnapshot] Button clicked");
+    console.log(
+      "[handleDownloadStateSnapshot] Current proofFiles state:",
+      proofFiles
+    );
+
+    if (!proofFiles) {
+      const errorMsg = "❌ Proof files not available for download";
+      console.error("[handleDownloadStateSnapshot]", errorMsg);
+      setLogs((prev) => [...prev, errorMsg]);
+      return;
+    }
+
+    // Log detailed file information
+    console.log("[handleDownloadStateSnapshot] Files to be included in ZIP:");
+    for (const [key, filePath] of Object.entries(proofFiles)) {
+      console.log(`  - ${key}: ${filePath}`);
+    }
 
     try {
-      const content = Buffer.from(newStateSnapshot, "utf-8");
-      const result = await window.electronAPI.saveFile(
-        "state_snapshot.json",
-        content
+      setLogs((prev) => [...prev, "📦 Creating ZIP file..."]);
+      console.log(
+        "[handleDownloadStateSnapshot] Creating ZIP with files:",
+        proofFiles
       );
 
-      if (result.success) {
+      // Create ZIP file
+      const zipResult = await window.electronAPI.createProofZip(proofFiles);
+      console.log("[handleDownloadStateSnapshot] ZIP creation result:", {
+        success: zipResult.success,
+        hasBuffer: !!zipResult.zipBuffer,
+        error: zipResult.error,
+      });
+
+      if (!zipResult.success || !zipResult.zipBuffer) {
+        throw new Error(zipResult.error || "Failed to create ZIP file");
+      }
+
+      // Pass base64 string directly - main process will convert to Buffer
+      console.log(
+        "[handleDownloadStateSnapshot] ZIP buffer size (base64):",
+        zipResult.zipBuffer.length
+      );
+
+      // Save ZIP file
+      setLogs((prev) => [...prev, "💾 Opening save dialog..."]);
+      console.log("[handleDownloadStateSnapshot] Calling saveFile...");
+
+      const saveResult = await window.electronAPI.saveFile(
+        "proof_output.zip",
+        zipResult.zipBuffer // Pass base64 string directly
+      );
+
+      console.log("[handleDownloadStateSnapshot] Save result:", saveResult);
+
+      if (saveResult.success) {
         setLogs((prev) => [
           ...prev,
-          `✅ State snapshot saved: ${result.filePath}`,
+          `✅ Proof ZIP file saved: ${saveResult.filePath}`,
+          "📄 ZIP contains: instance.json, placementVariables.json, permutation.json, state_snapshot.json, proof.json",
         ]);
+      } else {
+        throw new Error("User cancelled save dialog or save failed");
       }
     } catch (error: any) {
-      setLogs((prev) => [...prev, `❌ File save failed: ${error.message}`]);
+      const errorMsg = `❌ ZIP download failed: ${error.message}`;
+      console.error("[handleDownloadStateSnapshot] Error:", error);
+      setLogs((prev) => [...prev, errorMsg]);
     }
   };
 
@@ -432,19 +558,33 @@ const GenerateProof: React.FC = () => {
           </button>
 
           <div
-            className="flex items-center"
-            style={{ gap: "16px", marginBottom: "48px" }}
+            className="flex items-center justify-between"
+            style={{ marginBottom: "48px" }}
           >
-            <div className="bg-[#4fc3f7] p-3 rounded">
-              <Plus className="w-6 h-6 text-white" />
+            <div className="flex items-center" style={{ gap: "16px" }}>
+              <div className="bg-[#4fc3f7] p-3 rounded">
+                <Plus className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <h1 className="text-2xl font-bold text-white">
+                  Generate Proof
+                </h1>
+                <p className="text-sm text-gray-400">
+                  Create new proofs based on your channel state and transaction
+                  details.
+                </p>
+              </div>
             </div>
-            <div>
-              <h1 className="text-2xl font-bold text-white">Generate Proof</h1>
-              <p className="text-sm text-gray-400">
-                Create new proofs based on your channel state and transaction
-                details.
-              </p>
-            </div>
+            {/* Test Button for Download Functionality */}
+            <button
+              type="button"
+              onClick={handleTestDownloadButton}
+              className="px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white text-sm font-semibold transition-all flex items-center gap-2 rounded"
+              title="Test download button with test data"
+            >
+              <Zap className="w-4 h-4" />
+              Test Download
+            </button>
           </div>
 
           {/* Generation Overview (통합) */}
@@ -946,8 +1086,8 @@ const GenerateProof: React.FC = () => {
             </div>
           )} */}
 
-          {/* Development: Direct state_snapshot.json download */}
-          {generationComplete && newStateSnapshot && (
+          {/* Download Proof Files as ZIP */}
+          {generationComplete && proofFiles && (
             <div
               className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border-2 border-green-500"
               style={{ padding: "40px", marginBottom: "48px" }}
@@ -964,14 +1104,24 @@ const GenerateProof: React.FC = () => {
                     Your proof has been successfully generated and verified.
                   </p>
                   <button
-                    onClick={handleDownloadStateSnapshot}
-                    className="px-6 py-3 bg-green-500 hover:bg-green-600 text-white font-semibold transition-all flex items-center gap-2"
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      console.log("[Button] Click event fired");
+                      handleDownloadStateSnapshot();
+                    }}
+                    className="px-6 py-3 bg-green-500 hover:bg-green-600 text-white font-semibold transition-all flex items-center gap-2 cursor-pointer"
                   >
                     <Download className="w-5 h-5" />
-                    Download State Snapshot (JSON)
+                    Download Proof Files (ZIP)
                   </button>
                   <p className="text-gray-400 text-xs mt-4">
-                    This state snapshot can be used as previousState for the
+                    ZIP contains: instance.json, placementVariables.json,
+                    permutation.json, state_snapshot.json, and proof.json
+                  </p>
+                  <p className="text-gray-400 text-xs mt-2">
+                    The state_snapshot.json can be used as previousState for the
                     next transaction
                   </p>
                 </div>

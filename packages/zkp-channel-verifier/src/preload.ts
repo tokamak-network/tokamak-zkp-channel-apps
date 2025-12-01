@@ -30,5 +30,14 @@ contextBridge.exposeInMainWorld("electronAPI", {
   onVerifierStdout: (callback: (data: string) => void) => {
     ipcRenderer.on("verifier-stdout", (_, data) => callback(data));
   },
+
+  // Create ZIP file from proof files
+  createProofZip: (files: {
+    instance: string;
+    placementVariables: string;
+    permutation: string;
+    stateSnapshot: string;
+    proof: string;
+  }) => ipcRenderer.invoke("create-proof-zip", files),
 });
 

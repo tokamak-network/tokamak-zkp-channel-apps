@@ -59,6 +59,7 @@ export const RESOURCES = {
   setup: resolve(BINARY_ROOT_DIR, "resource/setup/output"),
   preprocess: resolve(BINARY_ROOT_DIR, "resource/preprocess/output"),
   synthesizer: resolve(BINARY_ROOT_DIR, "resource/synthesizer/outputs"),
+  prove: resolve(BINARY_ROOT_DIR, "resource/prove/output"),
   // qap-compiler library is in resource/qap-compiler/library (not subcircuits/library)
   qap: resolve(BINARY_ROOT_DIR, "resource/qap-compiler/library"),
 };

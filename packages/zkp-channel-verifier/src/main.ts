@@ -15,6 +15,7 @@ import path from "node:path";
 import fs from "node:fs";
 import { spawn } from "node:child_process";
 import started from "electron-squirrel-startup";
+import AdmZip from "adm-zip";
 
 if (started) {
   app.quit();
@@ -194,21 +195,48 @@ function setupIpcHandlers() {
   // Save file handler
   ipcMain.handle(
     "save-file",
-    async (event, defaultFileName: string, content: string | Buffer) => {
-      const { filePath } = await dialog.showSaveDialog({
-        defaultPath: defaultFileName,
-        filters: [{ name: "JSON Files", extensions: ["json"] }],
+    async (_event, defaultFileName: string, content: string | Buffer) => {
+      console.log("[save-file] Called with:", {
+        defaultFileName,
+        contentType: typeof content,
+        contentLength:
+          content instanceof Buffer ? content.length : content.length,
       });
+
+      // Determine file type from extension
+      const isZip = defaultFileName.endsWith(".zip");
+      const filters = isZip
+        ? [{ name: "ZIP Files", extensions: ["zip"] }]
+        : [{ name: "JSON Files", extensions: ["json"] }];
+
+      console.log("[save-file] Showing save dialog...");
+      const { filePath, canceled } = await dialog.showSaveDialog({
+        defaultPath: defaultFileName,
+        filters,
+      });
+
+      console.log("[save-file] Dialog result:", { filePath, canceled });
+
       if (filePath) {
-        // Convert base64 string to Buffer if needed
-        const buffer =
-          typeof content === "string"
-            ? Buffer.from(content, "base64")
-            : content;
-        fs.writeFileSync(filePath, buffer);
-        return { success: true, filePath };
+        try {
+          // Convert base64 string to Buffer if needed
+          const buffer =
+            typeof content === "string"
+              ? Buffer.from(content, "base64")
+              : content;
+
+          console.log("[save-file] Writing file to:", filePath);
+          fs.writeFileSync(filePath, buffer);
+          console.log("[save-file] File written successfully");
+          return { success: true, filePath };
+        } catch (error: any) {
+          console.error("[save-file] Error writing file:", error);
+          return { success: false, error: error.message };
+        }
       }
-      return { success: false };
+
+      console.log("[save-file] User cancelled or no file path");
+      return { success: false, canceled: true };
     }
   );
 
@@ -257,7 +285,7 @@ function setupIpcHandlers() {
       "./utils/binaryRunner"
     );
     const { runSynthesizer } = await import("./utils/synthesizerWrapper");
-    const { getTempDir } = await import("./utils/binaryConfig");
+    const { getTempDir, RESOURCES } = await import("./utils/binaryConfig");
     const { resolve } = await import("path");
 
     try {
@@ -306,8 +334,12 @@ function setupIpcHandlers() {
       // Create output directories
       const finalSynthesizerOutputDir =
         synthesizerOutputDir || getTempDir("synthesizer");
-      const finalProveOutputDir =
-        proveOutputDir || resolve(finalSynthesizerOutputDir, "..", "proof");
+      const finalProveOutputDir = proveOutputDir || RESOURCES.prove;
+
+      console.log("[synthesize-and-prove] Output directories:", {
+        synthesizer: finalSynthesizerOutputDir,
+        proof: finalProveOutputDir,
+      });
 
       fs.mkdirSync(finalSynthesizerOutputDir, { recursive: true });
       fs.mkdirSync(finalProveOutputDir, { recursive: true });
@@ -389,25 +421,41 @@ function setupIpcHandlers() {
         throw new Error(verifyResult.error || "Verification failed");
       }
 
+      const resultFiles = {
+        synthesizer: {
+          instance: resolve(finalSynthesizerOutputDir, "instance.json"),
+          placementVariables: resolve(
+            finalSynthesizerOutputDir,
+            "placementVariables.json"
+          ),
+          permutation: resolve(finalSynthesizerOutputDir, "permutation.json"),
+          stateSnapshot: resolve(
+            finalSynthesizerOutputDir,
+            "state_snapshot.json"
+          ),
+        },
+        proof: resolve(finalProveOutputDir, "proof.json"),
+      };
+
+      // Verify files actually exist
+      console.log("[synthesize-and-prove] Generated files:", resultFiles);
+      console.log("[synthesize-and-prove] File existence check:");
+      for (const [key, path] of Object.entries(resultFiles.synthesizer)) {
+        const exists = fs.existsSync(path);
+        console.log(
+          `  - ${key}: ${exists ? "✅ EXISTS" : "❌ NOT FOUND"} - ${path}`
+        );
+      }
+      const proofExists = fs.existsSync(resultFiles.proof);
+      console.log(
+        `  - proof: ${proofExists ? "✅ EXISTS" : "❌ NOT FOUND"} - ${resultFiles.proof}`
+      );
+
       return {
         success: true,
         verified: verifyResult.success,
         newStateSnapshot: synthesizerResult.stateSnapshot,
-        files: {
-          synthesizer: {
-            instance: resolve(finalSynthesizerOutputDir, "instance.json"),
-            placementVariables: resolve(
-              finalSynthesizerOutputDir,
-              "placementVariables.json"
-            ),
-            permutation: resolve(finalSynthesizerOutputDir, "permutation.json"),
-            stateSnapshot: resolve(
-              finalSynthesizerOutputDir,
-              "state_snapshot.json"
-            ),
-          },
-          proof: resolve(finalProveOutputDir, "proof.json"),
-        },
+        files: resultFiles,
       };
     } catch (error: any) {
       console.error("[synthesize-and-prove] Error:", error);
@@ -448,6 +496,121 @@ function setupIpcHandlers() {
       );
 
       return result;
+    }
+  );
+
+  // Create ZIP file from proof files
+  ipcMain.handle(
+    "create-proof-zip",
+    async (
+      _event,
+      files: {
+        instance: string;
+        placementVariables: string;
+        permutation: string;
+        stateSnapshot: string;
+        proof: string;
+      }
+    ) => {
+      try {
+        const zip = new AdmZip();
+
+        // Add all files to ZIP
+        const fileNames = {
+          instance: "instance.json",
+          placementVariables: "placementVariables.json",
+          permutation: "permutation.json",
+          stateSnapshot: "state_snapshot.json",
+          proof: "proof.json",
+        };
+
+        for (const [key, filePath] of Object.entries(files)) {
+          if (fs.existsSync(filePath)) {
+            const fileName = fileNames[key as keyof typeof fileNames];
+
+            // Get file stats to verify we're reading the latest file
+            const stats = fs.statSync(filePath);
+            const fileSize = stats.size;
+            const modifiedTime = stats.mtime.toISOString();
+
+            // Read a small portion of the file to verify content (for debugging)
+            let filePreview = "";
+            if (key === "instance") {
+              // For instance.json, read a_pub_user[15-16] to verify it's the correct file
+              try {
+                const content = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+                const aPubUser = content.a_pub_user || [];
+                filePreview = `a_pub_user[15-16]: ${JSON.stringify([aPubUser[15], aPubUser[16]])}`;
+                console.log(`[create-proof-zip] instance.json content check:`, {
+                  a_pub_user_length: aPubUser.length,
+                  a_pub_user_15: aPubUser[15],
+                  a_pub_user_16: aPubUser[16],
+                });
+              } catch (e) {
+                filePreview = "Unable to parse";
+              }
+            } else if (fileSize > 0 && fileSize < 10000) {
+              // For small files, read first 200 bytes as preview
+              const preview = fs
+                .readFileSync(filePath, "utf-8")
+                .substring(0, 200);
+              filePreview = preview.replace(/\s+/g, " ").trim();
+            } else if (key === "stateSnapshot") {
+              // For state snapshot, read stateRoot
+              try {
+                const content = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+                filePreview = `stateRoot: ${content.stateRoot || "N/A"}`;
+              } catch (e) {
+                filePreview = "Unable to parse";
+              }
+            } else if (key === "proof") {
+              // For proof, read first few fields
+              try {
+                const content = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+                filePreview = `proof fields: ${Object.keys(content).slice(0, 3).join(", ")}`;
+              } catch (e) {
+                filePreview = "Unable to parse";
+              }
+            }
+
+            console.log(`[create-proof-zip] Adding ${fileName}:`, {
+              path: filePath,
+              size: fileSize,
+              modified: modifiedTime,
+              preview: filePreview,
+            });
+
+            zip.addLocalFile(filePath, "", fileName);
+            console.log(`[create-proof-zip] ✅ Added ${fileName} to ZIP`);
+          } else {
+            console.warn(`[create-proof-zip] ❌ File not found: ${filePath}`);
+          }
+        }
+
+        // Generate ZIP buffer
+        const zipBuffer = zip.toBuffer();
+
+        // Verify files still exist after ZIP creation (they should not be deleted)
+        console.log(
+          "[create-proof-zip] Verifying files still exist after ZIP creation:"
+        );
+        for (const [key, filePath] of Object.entries(files)) {
+          const exists = fs.existsSync(filePath);
+          if (exists) {
+            const stats = fs.statSync(filePath);
+            console.log(
+              `  ✅ ${key}: EXISTS (${stats.size} bytes, modified: ${stats.mtime.toISOString()})`
+            );
+          } else {
+            console.log(`  ❌ ${key}: NOT FOUND - File was deleted!`);
+          }
+        }
+
+        return { success: true, zipBuffer: zipBuffer.toString("base64") };
+      } catch (error: any) {
+        console.error("[create-proof-zip] Error:", error);
+        return { success: false, error: error.message };
+      }
     }
   );
 
