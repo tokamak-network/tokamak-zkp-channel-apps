@@ -1,23 +1,20 @@
 /**
  * Synthesizer Wrapper
  *
- * Executes the SynthesizerAdapter via tsx, using the source code from Tokamak-zk-EVM.
- * The binary created by tokamak-cli --install is used to verify the environment,
- * but we execute the TypeScript source directly since the binary's CLI doesn't
- * expose synthesizeL2StateChannel.
+ * Wraps the Synthesizer binary from Tokamak-zk-EVM to generate circuit outputs.
+ * Uses the built binary executable instead of TypeScript source for production.
  */
 
-import { spawn } from "child_process";
 import {
   mkdirSync,
-  readFileSync,
   writeFileSync,
-  existsSync,
+  readFileSync,
   unlinkSync,
+  existsSync,
 } from "fs";
 import { resolve } from "path";
+import { spawn } from "child_process";
 import { tmpdir } from "os";
-import { BINARIES } from "./binaryConfig";
 
 export interface SynthesizerOptions {
   rpcUrl: string;
@@ -41,11 +38,53 @@ export interface SynthesizerResult {
 }
 
 /**
- * Run synthesizer using tsx to execute TypeScript source
- *
- * Verifies that the binary exists (created by tokamak-cli --install),
- * then uses tsx to run the TypeScript source directly since the binary's
- * CLI doesn't expose synthesizeL2StateChannel.
+ * Find synthesizer binary path
+ */
+function findSynthesizerBinary(): string | null {
+  const tokamakRoot = resolve(__dirname, "../../../../Tokamak-zk-EVM");
+
+  // Try dist/macOS/bin/synthesizer first (production)
+  const distPaths = [
+    resolve(tokamakRoot, "dist/macOS/bin/synthesizer"),
+    resolve(tokamakRoot, "dist/linux/bin/synthesizer"),
+    resolve(tokamakRoot, "dist/windows/bin/synthesizer.exe"),
+  ];
+
+  for (const path of distPaths) {
+    if (existsSync(path)) {
+      return path;
+    }
+  }
+
+  // Try synthesizer package bin directory (development)
+  const synthesizerBinPaths = [
+    resolve(tokamakRoot, "packages/frontend/synthesizer/bin/synthesizer-final"),
+    resolve(
+      tokamakRoot,
+      "packages/frontend/synthesizer/bin/synthesizer-macos-arm64"
+    ),
+    resolve(
+      tokamakRoot,
+      "packages/frontend/synthesizer/bin/synthesizer-macos-x64"
+    ),
+    resolve(
+      tokamakRoot,
+      "packages/frontend/synthesizer/bin/synthesizer-linux-x64"
+    ),
+  ];
+
+  for (const path of synthesizerBinPaths) {
+    if (existsSync(path)) {
+      return path;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Run synthesizer to generate circuit outputs
+ * Uses the built binary executable
  */
 export async function runSynthesizer(
   options: SynthesizerOptions
@@ -59,137 +98,75 @@ export async function runSynthesizer(
       senderIndex: options.senderIndex || 0,
     });
 
-    // Note: We use TypeScript source directly via tsx since the binary's CLI
-    // doesn't expose synthesizeL2StateChannel. The binaries are used for
-    // preprocess/prove/verify steps.
-    console.log("[Synthesizer] Using TypeScript source via tsx");
+    // Find synthesizer binary
+    const binaryPath = findSynthesizerBinary();
+    if (!binaryPath) {
+      throw new Error(
+        "Synthesizer binary not found. Please build the binary first or ensure it's in the expected location."
+      );
+    }
+
+    console.log(`[Synthesizer] Using binary: ${binaryPath}`);
 
     // Create output directory
     mkdirSync(options.outputDir, { recursive: true });
 
-    // Get the path to Tokamak-zk-EVM synthesizer source
-    // Try multiple possible locations
-    const possiblePaths = [
-      // From zkp-channel-verifier to Tokamak-zk-EVM (same level)
-      resolve(
-        __dirname,
-        "../../../../../../Tokamak-zk-EVM/packages/frontend/synthesizer/src/interface/adapters/synthesizerAdapter.ts"
-      ),
-      // From current working directory
-      resolve(
-        process.cwd(),
-        "../../Tokamak-zk-EVM/packages/frontend/synthesizer/src/interface/adapters/synthesizerAdapter.ts"
-      ),
-      // Absolute path (common location)
-      "/Users/son-yeongseong/Desktop/dev/Tokamak-zk-EVM/packages/frontend/synthesizer/src/interface/adapters/synthesizerAdapter.ts",
+    // Save previous state to temporary file if provided
+    let previousStatePath: string | undefined = undefined;
+    if (options.previousStateJson) {
+      try {
+        const previousState = JSON.parse(options.previousStateJson);
+        previousStatePath = resolve(
+          tmpdir(),
+          `previous-state-${Date.now()}.json`
+        );
+        writeFileSync(
+          previousStatePath,
+          JSON.stringify(previousState, null, 2)
+        );
+        console.log(
+          "[Synthesizer] Previous state loaded:",
+          previousState.stateRoot
+        );
+      } catch (e) {
+        console.warn("[Synthesizer] Failed to parse previousStateJson:", e);
+      }
+    }
+
+    // Build command arguments
+    const args = [
+      "l2-state-channel",
+      "--channel-id",
+      options.channelId.toString(),
+      "--token",
+      options.contractAddress,
+      "--recipient",
+      options.recipientAddress,
+      "--amount",
+      options.amount,
+      "--rollup-bridge",
+      options.rollupBridgeAddress,
+      "--sender-index",
+      (options.senderIndex || 0).toString(),
+      "--rpc-url",
+      options.rpcUrl,
+      "--output-dir",
+      options.outputDir,
     ];
 
-    let finalPath: string | null = null;
-    for (const path of possiblePaths) {
-      if (existsSync(path)) {
-        finalPath = path;
-        break;
-      }
+    if (previousStatePath) {
+      args.push("--previous-state", previousStatePath);
     }
 
-    if (!finalPath) {
-      throw new Error(
-        `SynthesizerAdapter source not found. Tried:\n` +
-          possiblePaths.map((p) => `  - ${p}`).join("\n") +
-          `\nPlease ensure Tokamak-zk-EVM is available at the expected location.`
-      );
-    }
-
-    console.log(`[Synthesizer] Using SynthesizerAdapter from: ${finalPath}`);
-
-    // Extract tokamak root from finalPath for cwd
-    const tokamakRoot = finalPath.replace(
-      /\/packages\/frontend\/synthesizer\/src\/interface\/adapters\/synthesizerAdapter\.ts$/,
-      ""
-    );
-
-    // Create a temporary TypeScript script (use .mts for ESM)
-    const scriptPath = resolve(tmpdir(), `synthesizer_l2_${Date.now()}.mts`);
-    const resultPath = resolve(
-      tmpdir(),
-      `synthesizer_result_${Date.now()}.json`
-    );
-
-    // Generate the script content (ESM format)
-    // Note: SynthesizerAdapter now handles state snapshot normalization internally
-    const scriptContent = `import { SynthesizerAdapter } from '${finalPath}';
-import { writeFileSync } from 'fs';
-
-async function run() {
-  try {
-    const options = ${JSON.stringify(options)};
-    
-    const adapter = new SynthesizerAdapter({ rpcUrl: options.rpcUrl });
-    
-    let previousState = undefined;
-    if (options.previousStateJson) {
-      // SynthesizerAdapter will automatically normalize the state snapshot
-      // (converts bytes objects to hex strings, strings to bigints, etc.)
-      previousState = JSON.parse(options.previousStateJson);
-    }
-    
-    const result = await adapter.synthesizeL2StateChannel(
-      options.channelId,
-      {
-        to: options.recipientAddress,
-        tokenAddress: options.contractAddress,
-        amount: options.amount,
-        rollupBridgeAddress: options.rollupBridgeAddress,
-        senderIdx: options.senderIndex || 0,
-      },
-      {
-        previousState,
-        outputPath: options.outputDir,
-      }
-    );
-    
-    const stateSnapshotJson = JSON.stringify(
-      result.state,
-      (_key, value) => (typeof value === 'bigint' ? value.toString() : value),
-      2
-    );
-    
-    writeFileSync('${resultPath}', JSON.stringify({
-      success: true,
-      outputDir: options.outputDir,
-      stateSnapshot: stateSnapshotJson,
-      placements: result.placementVariables.length,
-      stateRoot: result.state.stateRoot,
-    }, null, 2));
-    
-    process.exit(0);
-  } catch (error: any) {
-    writeFileSync('${resultPath}', JSON.stringify({
-      success: false,
-      error: error.message || String(error),
-    }, null, 2));
-    process.exit(1);
-  }
-}
-
-run();
-`;
-
-    // Write the script file
-    writeFileSync(scriptPath, scriptContent);
-
-    // Execute using tsx
-    return new Promise((resolvePromise) => {
-      console.log("[Synthesizer] Executing via tsx:", scriptPath);
-
-      // Use tsx with ESM support (tsx handles .mts files as ESM by default)
-      const proc = spawn("npx", ["tsx", scriptPath], {
+    // Execute binary
+    return new Promise((promiseResolve) => {
+      const spawnOptions: Parameters<typeof spawn>[2] = {
         stdio: ["pipe", "pipe", "pipe"],
-        cwd: resolve(tokamakRoot, "packages/frontend/synthesizer"),
-        env: {
-          ...process.env,
-        },
-      });
+        env: { ...process.env },
+        shell: false,
+      };
+
+      const proc = spawn(binaryPath, args, spawnOptions);
 
       let stdout = "";
       let stderr = "";
@@ -197,67 +174,82 @@ run();
       proc.stdout?.on("data", (data: Buffer) => {
         const text = data.toString();
         stdout += text;
-        console.log("[Synthesizer] stdout:", text);
+        process.stdout.write(`[Synthesizer] ${text}`);
       });
 
       proc.stderr?.on("data", (data: Buffer) => {
         const text = data.toString();
         stderr += text;
-        console.error("[Synthesizer] stderr:", text);
+        process.stderr.write(`[Synthesizer] ${text}`);
       });
 
       proc.on("close", (code: number) => {
-        // Clean up script file
-        try {
-          if (existsSync(scriptPath)) {
-            unlinkSync(scriptPath);
-          }
-        } catch (e) {
-          // Ignore cleanup errors
-        }
-
-        // Check if result file exists (even if exit code is non-zero, it might have written an error)
-        if (existsSync(resultPath)) {
+        // Clean up previous state file
+        if (previousStatePath) {
           try {
-            const resultData = readFileSync(resultPath, "utf-8");
-            const result = JSON.parse(resultData);
-
-            // Clean up result file
-            try {
-              if (existsSync(resultPath)) {
-                unlinkSync(resultPath);
-              }
-            } catch (e) {
-              // Ignore cleanup errors
-            }
-
-            if (result.success) {
-              console.log("[Synthesizer] Completed successfully");
-            } else {
-              console.error("[Synthesizer] Synthesis failed:", result.error);
-            }
-            resolvePromise(result);
-            return;
+            unlinkSync(previousStatePath);
           } catch (e) {
-            console.error("[Synthesizer] Failed to read result:", e);
+            // Ignore cleanup errors
           }
         }
 
-        // If no result file or failed to read it
-        console.error("[Synthesizer] Process failed with code:", code);
-        console.error("[Synthesizer] stdout:", stdout);
-        console.error("[Synthesizer] stderr:", stderr);
-        resolvePromise({
-          success: false,
-          error: stderr || stdout || `Process exited with code ${code}`,
-        });
+        // Read state_snapshot.json from output directory
+        const stateSnapshotPath = resolve(
+          options.outputDir,
+          "state_snapshot.json"
+        );
+
+        if (code === 0) {
+          // Success - read output files
+          try {
+            let stateSnapshot: string | undefined = undefined;
+            if (existsSync(stateSnapshotPath)) {
+              const stateContent = readFileSync(stateSnapshotPath, "utf-8");
+              const state = JSON.parse(stateContent);
+              stateSnapshot = JSON.stringify(state, null, 2);
+
+              promiseResolve({
+                success: true,
+                outputDir: options.outputDir,
+                stateSnapshot,
+                stateRoot: state.stateRoot,
+                placements: 0, // Will be read from instance.json if needed
+              });
+            } else {
+              promiseResolve({
+                success: true,
+                outputDir: options.outputDir,
+                error: "State snapshot not found in output directory",
+              });
+            }
+          } catch (error: any) {
+            promiseResolve({
+              success: false,
+              error: `Failed to read output: ${error.message}. stdout: ${stdout}, stderr: ${stderr}`,
+            });
+          }
+        } else {
+          // Error
+          promiseResolve({
+            success: false,
+            error: `Synthesizer exited with code ${code}. stdout: ${stdout}, stderr: ${stderr}`,
+          });
+        }
       });
 
       proc.on("error", (error: Error) => {
-        console.error("[Synthesizer] Failed to start process:", error);
-        resolvePromise({
+        // Clean up previous state file
+        if (previousStatePath) {
+          try {
+            unlinkSync(previousStatePath);
+          } catch (e) {
+            // Ignore cleanup errors
+          }
+        }
+
+        promiseResolve({
           success: false,
-          error: error.message,
+          error: `Failed to spawn process: ${error.message}`,
         });
       });
     });

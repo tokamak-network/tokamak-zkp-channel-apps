@@ -23,10 +23,7 @@
     /* Path mapping */
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-      "src/interface/*": ["src/synthesizer-lib/interface/*"],
-      "src/synthesizer/*": ["src/synthesizer-lib/synthesizer/*"],
-      "src/TokamakL2JS/*": ["src/synthesizer-lib/TokamakL2JS/*"]
+      "@/*": ["src/*"]
     }
   },
   "include": ["src"],

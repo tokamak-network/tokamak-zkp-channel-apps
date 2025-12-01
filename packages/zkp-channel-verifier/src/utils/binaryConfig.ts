@@ -35,7 +35,6 @@ export const BINARIES = {
   prove: resolve(BINARY_ROOT_DIR, 'bin/prove'),
   verify: resolve(BINARY_ROOT_DIR, 'bin/verify'),
   trustedSetup: resolve(BINARY_ROOT_DIR, 'bin/trusted-setup'),
-  synthesizer: resolve(BINARY_ROOT_DIR, 'bin/synthesizer'),
 };
 
 // Resource paths

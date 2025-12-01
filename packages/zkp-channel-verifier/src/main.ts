@@ -194,13 +194,18 @@ function setupIpcHandlers() {
   // Save file handler
   ipcMain.handle(
     "save-file",
-    async (event, defaultFileName: string, content: Buffer) => {
+    async (event, defaultFileName: string, content: string | Buffer) => {
       const { filePath } = await dialog.showSaveDialog({
         defaultPath: defaultFileName,
-        filters: [{ name: "ZIP Files", extensions: ["zip"] }],
+        filters: [{ name: "JSON Files", extensions: ["json"] }],
       });
       if (filePath) {
-        fs.writeFileSync(filePath, content);
+        // Convert base64 string to Buffer if needed
+        const buffer =
+          typeof content === "string"
+            ? Buffer.from(content, "base64")
+            : content;
+        fs.writeFileSync(filePath, buffer);
         return { success: true, filePath };
       }
       return { success: false };
@@ -332,9 +337,7 @@ function setupIpcHandlers() {
       });
 
       if (!synthesizerResult.success) {
-        throw new Error(
-          synthesizerResult.error || "Synthesizer failed"
-        );
+        throw new Error(synthesizerResult.error || "Synthesizer failed");
       }
 
       console.log("[synthesize-and-prove] Synthesizer completed:", {
@@ -398,7 +401,10 @@ function setupIpcHandlers() {
               "placementVariables.json"
             ),
             permutation: resolve(finalSynthesizerOutputDir, "permutation.json"),
-            stateSnapshot: resolve(finalSynthesizerOutputDir, "state_snapshot.json"),
+            stateSnapshot: resolve(
+              finalSynthesizerOutputDir,
+              "state_snapshot.json"
+            ),
           },
           proof: resolve(finalProveOutputDir, "proof.json"),
         },

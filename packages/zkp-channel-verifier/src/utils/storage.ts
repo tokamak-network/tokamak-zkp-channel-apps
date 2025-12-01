@@ -8,8 +8,9 @@ export interface AppSettings {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
-  rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/PbqCcGx1oHN7yNaFdUJUYqPEN0QSp23S', // Alchemy RPC (Tokamak zk-EVM 권장)
-  contractAddress: '0x780ad1b236390C42479b62F066F5cEeAa4c77ad6', // RollupBridge Proxy (Sepolia testnet)
+  rpcUrl:
+    "https://eth-sepolia.g.alchemy.com/v2/PbqCcGx1oHN7yNaFdUJUYqPEN0QSp23S", // Alchemy RPC (Tokamak zk-EVM 권장)
+  contractAddress: "0x780ad1b236390C42479b62F066F5cEeAa4c77ad6", // RollupBridgeCore Proxy on Sepolia
   chainId: 11155111, // Sepolia
 };
 
@@ -17,12 +18,12 @@ const DEFAULT_SETTINGS: AppSettings = {
 export const storage = {
   getSettings(): AppSettings {
     try {
-      const stored = localStorage.getItem('zkp-channel-settings');
+      const stored = localStorage.getItem("zkp-channel-settings");
       if (stored) {
         return { ...DEFAULT_SETTINGS, ...JSON.parse(stored) };
       }
     } catch (error) {
-      console.error('Failed to load settings:', error);
+      console.error("Failed to load settings:", error);
     }
     return DEFAULT_SETTINGS;
   },
@@ -31,15 +32,15 @@ export const storage = {
     try {
       const current = this.getSettings();
       const updated = { ...current, ...settings };
-      
+
       // Trim RPC URL to remove any leading/trailing whitespace
       if (updated.rpcUrl) {
         updated.rpcUrl = updated.rpcUrl.trim();
       }
-      
-      localStorage.setItem('zkp-channel-settings', JSON.stringify(updated));
+
+      localStorage.setItem("zkp-channel-settings", JSON.stringify(updated));
     } catch (error) {
-      console.error('Failed to save settings:', error);
+      console.error("Failed to save settings:", error);
     }
   },
 
@@ -68,7 +69,6 @@ export const storage = {
   },
 
   resetToDefaults(): void {
-    localStorage.removeItem('zkp-channel-settings');
+    localStorage.removeItem("zkp-channel-settings");
   },
 };
-
