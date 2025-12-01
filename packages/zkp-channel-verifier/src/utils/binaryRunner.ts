@@ -6,7 +6,7 @@
 
 import { spawn } from 'child_process';
 import { existsSync, mkdirSync } from 'fs';
-import { resolve } from 'path';
+import { resolve, basename } from 'path';
 import { BINARIES, RESOURCES } from './binaryConfig';
 
 export interface BinaryResult {
@@ -28,6 +28,7 @@ async function executeBinary(
   onStderr?: OutputCallback
 ): Promise<BinaryResult> {
   return new Promise((resolve) => {
+    const cmdName = basename(command);
     console.log(`[BinaryRunner] Executing: ${command} ${args.join(' ')}`);
 
     const proc = spawn(command, args, {
@@ -40,12 +41,14 @@ async function executeBinary(
     proc.stdout?.on('data', (data: Buffer) => {
       const text = data.toString();
       stdout += text;
+      console.log(`[${cmdName}] ${text.trim()}`);
       if (onStdout) onStdout(text);
     });
 
     proc.stderr?.on('data', (data: Buffer) => {
       const text = data.toString();
       stderr += text;
+      console.error(`[${cmdName}] ${text.trim()}`);
       if (onStderr) onStderr(text);
     });
 
