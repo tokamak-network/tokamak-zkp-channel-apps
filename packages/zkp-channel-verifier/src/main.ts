@@ -13,7 +13,7 @@ declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string;
 declare const MAIN_WINDOW_VITE_NAME: string;
 import path from "node:path";
 import fs from "node:fs";
-import { exec, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import started from "electron-squirrel-startup";
 
 if (started) {
@@ -163,7 +163,7 @@ function setupIpcHandlers() {
       if (isZip) {
         // Extract ZIP file to temporary directory
         const { extractZip, readStateSnapshot } = await import(
-          "./synthesizer/zipHelper"
+          "./utils/zipHelper"
         );
         const extractedDir = await extractZip(filePath);
 
@@ -246,111 +246,159 @@ function setupIpcHandlers() {
   // ========================================================================
 
   // Synthesize and prove handler (full workflow)
-  // Note: Synthesizer is run as a binary, so we only run preprocess/prove/verify here
+  // Uses binary runner and synthesizer wrapper
   ipcMain.handle("synthesize-and-prove", async (event, options: any) => {
     const { runProver, runVerifier, runPreprocess } = await import(
-      "./synthesizer/binaryRunner"
+      "./utils/binaryRunner"
     );
+    const { runSynthesizer } = await import("./utils/synthesizerWrapper");
+    const { getTempDir } = await import("./utils/binaryConfig");
     const { resolve } = await import("path");
 
     try {
       const {
-        synthesizerOutputDir, // Path to directory containing instance.json, placementVariables.json, permutation.json
-        proveOutputDir, // Optional: where to save proof files
+        rpcUrl,
+        contractAddress,
+        recipientAddress,
+        amount,
+        channelId,
+        channelParticipants,
+        previousStateJson,
+        senderIndex = 0,
+        synthesizerOutputDir,
+        proveOutputDir,
       } = options;
 
-      if (!synthesizerOutputDir) {
-        throw new Error("synthesizerOutputDir is required");
+      // Validate required inputs
+      if (
+        !rpcUrl ||
+        !contractAddress ||
+        !recipientAddress ||
+        !amount ||
+        !channelId ||
+        !channelParticipants ||
+        channelParticipants.length === 0
+      ) {
+        throw new Error(
+          "Missing required inputs: rpcUrl, contractAddress, recipientAddress, amount, channelId, channelParticipants"
+        );
       }
 
       console.log("[synthesize-and-prove] Starting with options:", {
-        synthesizerOutputDir,
-        proveOutputDir,
+        rpcUrl,
+        contractAddress,
+        recipientAddress,
+        amount,
+        channelId,
+        channelParticipants: channelParticipants.length,
+        senderIndex,
       });
 
-      // Verify that required Synthesizer output files exist
-      const requiredFiles = [
-        "instance.json",
-        "placementVariables.json",
-        "permutation.json",
-      ];
-      for (const file of requiredFiles) {
-        const filePath = resolve(synthesizerOutputDir, file);
-        if (!fs.existsSync(filePath)) {
-          throw new Error(
-            `Required Synthesizer output file not found: ${filePath}`
-          );
-        }
-      }
+      // Get RollupBridgeCore address (default Sepolia address)
+      const ROLLUP_BRIDGE_CORE_ADDRESS =
+        "0x780ad1b236390C42479b62F066F5cEeAa4c77ad6";
 
-      // Create prove output directory if not provided
+      // Create output directories
+      const finalSynthesizerOutputDir =
+        synthesizerOutputDir || getTempDir("synthesizer");
       const finalProveOutputDir =
-        proveOutputDir || resolve(synthesizerOutputDir, "..", "proof");
+        proveOutputDir || resolve(finalSynthesizerOutputDir, "..", "proof");
+
+      fs.mkdirSync(finalSynthesizerOutputDir, { recursive: true });
       fs.mkdirSync(finalProveOutputDir, { recursive: true });
 
-      event.sender.send("synthesis-complete", {
-        outputDir: synthesizerOutputDir,
+      // Validate channel ID
+      const channelIdNum = parseInt(channelId, 10);
+      if (isNaN(channelIdNum)) {
+        throw new Error(`Invalid channel ID: ${channelId}`);
+      }
+
+      // Step 1: Run Synthesizer
+      event.sender.send(
+        "status-update",
+        "Running Synthesizer to generate circuit..."
+      );
+
+      const synthesizerResult = await runSynthesizer({
+        rpcUrl,
+        channelId: channelIdNum,
+        contractAddress,
+        recipientAddress,
+        amount,
+        rollupBridgeAddress: ROLLUP_BRIDGE_CORE_ADDRESS,
+        senderIndex,
+        previousStateJson,
+        outputDir: finalSynthesizerOutputDir,
       });
 
-      // Run preprocess (one-time)
+      if (!synthesizerResult.success) {
+        throw new Error(
+          synthesizerResult.error || "Synthesizer failed"
+        );
+      }
+
+      console.log("[synthesize-and-prove] Synthesizer completed:", {
+        placements: synthesizerResult.placements,
+        stateRoot: synthesizerResult.stateRoot,
+      });
+
+      event.sender.send("synthesis-complete", {
+        outputDir: finalSynthesizerOutputDir,
+      });
+
+      // Step 2: Run preprocess (one-time)
       event.sender.send("status-update", "Running preprocess...");
       const preprocessResult = await runPreprocess(
-        synthesizerOutputDir,
+        finalSynthesizerOutputDir,
         (data) => event.sender.send("prover-stdout", data),
         (data) => event.sender.send("prover-stderr", data)
       );
 
       if (!preprocessResult.success) {
-        throw new Error(preprocessResult.stderr || "Preprocess failed");
+        throw new Error(preprocessResult.error || "Preprocess failed");
       }
 
-      // Run prover
+      // Step 3: Run prover
       event.sender.send("status-update", "Generating proof...");
       const proveResult = await runProver(
-        synthesizerOutputDir,
+        finalSynthesizerOutputDir,
         finalProveOutputDir,
         (data) => event.sender.send("prover-stdout", data),
         (data) => event.sender.send("prover-stderr", data)
       );
 
       if (!proveResult.success) {
-        throw new Error(proveResult.stderr || "Prove failed");
+        throw new Error(proveResult.error || "Prove failed");
       }
 
       event.sender.send("prove-complete", { outputDir: finalProveOutputDir });
 
-      // Run verifier
+      // Step 4: Run verifier
       event.sender.send("status-update", "Verifying proof...");
       const verifyResult = await runVerifier(
-        synthesizerOutputDir,
+        finalSynthesizerOutputDir,
         finalProveOutputDir,
         (data) => event.sender.send("verifier-stdout", data),
         (data) => event.sender.send("verifier-stderr", data)
       );
 
       if (!verifyResult.success) {
-        throw new Error(verifyResult.stderr || "Verification failed");
+        throw new Error(verifyResult.error || "Verification failed");
       }
-
-      // Check if state_snapshot.json exists (optional)
-      const stateSnapshotPath = resolve(
-        synthesizerOutputDir,
-        "state_snapshot.json"
-      );
-      const hasStateSnapshot = fs.existsSync(stateSnapshotPath);
 
       return {
         success: true,
         verified: verifyResult.success,
+        newStateSnapshot: synthesizerResult.stateSnapshot,
         files: {
           synthesizer: {
-            instance: resolve(synthesizerOutputDir, "instance.json"),
+            instance: resolve(finalSynthesizerOutputDir, "instance.json"),
             placementVariables: resolve(
-              synthesizerOutputDir,
+              finalSynthesizerOutputDir,
               "placementVariables.json"
             ),
-            permutation: resolve(synthesizerOutputDir, "permutation.json"),
-            ...(hasStateSnapshot && { stateSnapshot: stateSnapshotPath }),
+            permutation: resolve(finalSynthesizerOutputDir, "permutation.json"),
+            stateSnapshot: resolve(finalSynthesizerOutputDir, "state_snapshot.json"),
           },
           proof: resolve(finalProveOutputDir, "proof.json"),
         },
@@ -364,7 +412,7 @@ function setupIpcHandlers() {
 
   // Run prover only (for already synthesized circuits)
   ipcMain.handle("run-prover", async (event, synthesizerOutputDir: string) => {
-    const { runProver } = await import("./synthesizer/binaryRunner");
+    const { runProver } = await import("./utils/binaryRunner");
     const { resolve } = await import("path");
 
     const proveOutputDir = resolve(synthesizerOutputDir, "../proof");
@@ -384,7 +432,7 @@ function setupIpcHandlers() {
   ipcMain.handle(
     "run-verifier",
     async (event, synthesizerOutputDir: string, proveOutputDir: string) => {
-      const { runVerifier } = await import("./synthesizer/binaryRunner");
+      const { runVerifier } = await import("./utils/binaryRunner");
 
       const result = await runVerifier(
         synthesizerOutputDir,
@@ -424,8 +472,27 @@ app.whenReady().then(async () => {
     callback({ requestHeaders });
   });
 
-  // Don't modify response headers - let the server handle CORS
-  // Adding CORS headers here causes duplicate '*, *' errors
+  // Handle CORS for RPC requests
+  defaultSession.webRequest.onHeadersReceived((details, callback) => {
+    const { responseHeaders } = details;
+
+    if (
+      details.url.includes("infura.io") ||
+      details.url.includes("alchemy.com") ||
+      details.url.includes("rpc.")
+    ) {
+      if (responseHeaders) {
+        // Delete existing CORS headers to prevent conflicts
+        delete responseHeaders["access-control-allow-origin"];
+        delete responseHeaders["Access-Control-Allow-Origin"];
+
+        // Allow all origins
+        responseHeaders["Access-Control-Allow-Origin"] = ["*"];
+      }
+    }
+
+    callback({ responseHeaders });
+  });
 
   setupIpcHandlers();
   createWindow();

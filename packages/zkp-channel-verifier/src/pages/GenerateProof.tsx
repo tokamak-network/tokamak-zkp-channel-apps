@@ -7,7 +7,6 @@ import {
   FileText,
   Users,
   Coins,
-  AlertTriangle,
   ArrowLeft,
   Check,
   Download,
@@ -18,7 +17,10 @@ import {
   getChannelParticipants,
   getChannelAllowedTokens,
   getTokenSymbol,
+  getChannelInfo,
+  getChannelStateString,
 } from "@/contracts/RollupBridgeCore";
+import { storage } from "@/utils/storage";
 
 interface UploadedFile {
   name: string;
@@ -30,10 +32,14 @@ interface UploadedFile {
 const GenerateProof: React.FC = () => {
   const navigate = useNavigate();
   const [stateFile, setStateFile] = useState<UploadedFile | null>(null);
-  const [recipientAddress, setRecipientAddress] = useState("");
+  const [senderAddress, setSenderAddress] = useState(""); // From address (sender)
+  const [recipientAddress, setRecipientAddress] = useState(""); // To address (recipient)
   const [inputMode, setInputMode] = useState<"select" | "manual">("select");
   const [amount, setAmount] = useState("");
-  const [selectedToken, setSelectedToken] = useState("ETH"); // 선택된 토큰 (기본값 ETH)
+  const [selectedToken, setSelectedToken] = useState("ETH"); // 선택된 토큰 심볼 (기본값 ETH)
+  const [allowedTokenAddresses, setAllowedTokenAddresses] = useState<string[]>(
+    []
+  ); // 채널의 allowedTokens 주소 배열
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationComplete, setGenerationComplete] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
@@ -42,7 +48,7 @@ const GenerateProof: React.FC = () => {
   const [newStateSnapshot, setNewStateSnapshot] = useState<string | null>(null); // For development: direct state_snapshot.json download
 
   // 온체인 데이터
-  const [channelId, setChannelId] = useState<string>("1"); // 채널 ID (설정이나 입력으로 받아야 함)
+  const [channelId, setChannelId] = useState<string>("8"); // 채널 ID (기본값: 8, Sepolia testnet)
   const [supportedTokens, setSupportedTokens] = useState<string[]>([
     "ETH",
     "WTON",
@@ -67,33 +73,86 @@ const GenerateProof: React.FC = () => {
     if (!channelId) return;
 
     setIsLoadingChannelData(true);
+    setLogs((prev) => [
+      ...prev,
+      `🔍 Fetching channel data for Channel ID: ${channelId}...`,
+    ]);
+
     try {
       const channelIdBigInt = BigInt(channelId);
 
-      // 참여자 목록 가져오기
+      // 1. Get channel info (includes state, initial root, participant count, allowed tokens)
+      const channelInfo = await getChannelInfo(channelIdBigInt);
+      if (!channelInfo) {
+        throw new Error("Channel not found or failed to fetch channel info");
+      }
+
+      const channelState = Number(channelInfo.state);
+      const channelStateName = getChannelStateString(channelState);
+
+      setLogs((prev) => [
+        ...prev,
+        `✅ Channel info fetched`,
+        `   - State: ${channelStateName} (${channelState})`,
+        `   - Participants: ${channelInfo.participantCount}`,
+        `   - Initial Root: ${channelInfo.initialRoot.substring(0, 20)}...`,
+        `   - Allowed Tokens: ${channelInfo.allowedTokens.length}`,
+      ]);
+
+      // 2. Get participants list
       const participants = await getChannelParticipants(channelIdBigInt);
+      if (participants.length === 0) {
+        throw new Error("No participants found in channel");
+      }
+
+      // Set participants with full address as label (like onchain-channel-simulation.ts)
       setChannelParticipants(
-        participants.map((addr, index) => ({
+        participants.map((addr) => ({
           address: addr,
-          label: `Participant ${index + 1}`,
+          label: `${addr}`, // Full address as label for clarity
         }))
       );
 
-      // 허용된 토큰 목록 가져오기
-      const tokens = await getChannelAllowedTokens(channelIdBigInt);
+      setLogs((prev) => [
+        ...prev,
+        `✅ Participants fetched: ${participants.length}`,
+        ...participants.map((addr, idx) => `   ${idx + 1}. ${addr}`),
+      ]);
+
+      // 3. Get allowed tokens
+      const tokens =
+        channelInfo.allowedTokens ||
+        (await getChannelAllowedTokens(channelIdBigInt));
+
+      // Store token addresses for later use
+      setAllowedTokenAddresses([...tokens]); // Convert readonly array to mutable array
+
       const tokenSymbols = tokens.map(getTokenSymbol);
       setSupportedTokens(tokenSymbols);
 
-      // 첫 번째 토큰을 기본 선택
-      if (tokenSymbols.length > 0 && !selectedToken) {
+      // First token as default selection
+      if (tokenSymbols.length > 0) {
         setSelectedToken(tokenSymbols[0]);
+      }
+
+      // Set first participant as default sender (from)
+      // TODO: In the future, automatically set to user's own address
+      if (participants.length > 0) {
+        setSenderAddress(participants[0]);
       }
 
       setLogs((prev) => [
         ...prev,
-        `✅ Channel ${channelId} data loaded`,
-        `👥 ${participants.length} participants`,
-        `🪙 ${tokenSymbols.length} supported tokens`,
+        `✅ Allowed tokens: ${tokens.length}`,
+        ...tokens.map(
+          (addr, idx) => `   ${idx + 1}. ${getTokenSymbol(addr)} (${addr})`
+        ),
+      ]);
+
+      setLogs((prev) => [
+        ...prev,
+        `✅ Allowed tokens: ${tokenSymbols.join(", ")}`,
+        `✅ Channel ${channelId} data loaded successfully`,
       ]);
     } catch (error: any) {
       console.error("Failed to fetch channel data:", error);
@@ -101,23 +160,11 @@ const GenerateProof: React.FC = () => {
         ...prev,
         `❌ Failed to load channel data: ${error?.message || String(error)}`,
       ]);
-      // Fallback to demo data
-      setSupportedTokens(["ETH", "WTON", "USDT"]);
-      setChannelParticipants([
-        {
-          address: "0x1234567890123456789012345678901234567890",
-          label: "Participant 1",
-        },
-        {
-          address: "0x9876543210987654321098765432109876543210",
-          label: "Participant 2",
-        },
-        {
-          address: "0xabcdef1234567890abcdef1234567890abcdef12",
-          label: "Participant 3",
-        },
-      ]);
-      if (!selectedToken) setSelectedToken("ETH");
+
+      // Clear participants and tokens on error
+      setChannelParticipants([]);
+      setSupportedTokens([]);
+      setSelectedToken("");
     } finally {
       setIsLoadingChannelData(false);
     }
@@ -196,7 +243,7 @@ const GenerateProof: React.FC = () => {
   };
 
   const handleGenerate = async () => {
-    if (!stateFile || !recipientAddress || !amount) {
+    if (!stateFile || !senderAddress || !recipientAddress || !amount.trim()) {
       alert("Please fill in all fields.");
       return;
     }
@@ -206,7 +253,8 @@ const GenerateProof: React.FC = () => {
     setLogs([
       "🚀 Starting proof generation...",
       `📁 State file: ${stateFile.name}`,
-      `💳 Recipient: ${recipientAddress}`,
+      `👤 Sender (From): ${senderAddress}`,
+      `💳 Recipient (To): ${recipientAddress}`,
       `💰 Amount: ${amount} ${selectedToken}`,
     ]);
 
@@ -240,30 +288,79 @@ const GenerateProof: React.FC = () => {
         ]);
       });
 
-      // Execute proof generation
-      // If ZIP file, use extracted directory as synthesizerOutputDir
-      // If JSON file, we need to handle it differently (not supported yet for binary-only mode)
-      if (stateFile.isZip) {
-        // ZIP file: use extracted directory directly
-        const result = await window.electronAPI.synthesizeAndProve({
-          synthesizerOutputDir: stateFile.path, // Extracted directory path
-        });
+      // Get RPC URL and contract address from settings
+      const settings = storage.getSettings();
+      const rpcUrl = settings.rpcUrl;
 
-        if (result.success && result.verified) {
-          setLogs((prev) => [
-            ...prev,
-            "✅ Proof generation completed!",
-            "✅ Verification PASSED!",
-          ]);
-          setGenerationComplete(true);
-        } else {
-          throw new Error(result.error || "Verification failed");
-        }
-      } else {
-        // JSON file: not supported in binary-only mode
+      // Determine contract address based on selected token from channel's allowedTokens
+      if (allowedTokenAddresses.length === 0) {
         throw new Error(
-          "JSON file upload is not supported. Please upload a ZIP file containing Synthesizer output files."
+          "No allowed tokens found. Please fetch channel data first."
         );
+      }
+
+      // Find token address by symbol (selectedToken is a symbol)
+      const tokenSymbols = allowedTokenAddresses.map(getTokenSymbol);
+      const selectedTokenIndex = tokenSymbols.indexOf(selectedToken);
+      if (selectedTokenIndex === -1) {
+        throw new Error(
+          `Selected token "${selectedToken}" not found in channel's allowed tokens. Available: ${tokenSymbols.join(", ")}`
+        );
+      }
+
+      const contractAddress = allowedTokenAddresses[selectedTokenIndex];
+
+      // Get participant addresses
+      const participantAddresses = channelParticipants.map((p) => p.address);
+      if (participantAddresses.length === 0) {
+        throw new Error(
+          "No channel participants found. Please fetch channel data first."
+        );
+      }
+
+      // Validate sender address
+      if (!senderAddress) {
+        throw new Error("Sender address (From) is required");
+      }
+
+      // Find sender index from selected sender address
+      const senderIndex = participantAddresses.findIndex(
+        (addr) => addr.toLowerCase() === senderAddress.toLowerCase()
+      );
+      if (senderIndex === -1) {
+        throw new Error(
+          `Sender address ${senderAddress} is not a participant in this channel`
+        );
+      }
+
+      // Execute proof generation using SynthesizerAdapter
+      // ZIP file contains state_snapshot.json which will be used as previousState
+      const result = await window.electronAPI.synthesizeAndProve({
+        rpcUrl,
+        contractAddress,
+        recipientAddress,
+        amount: amount.trim(),
+        channelId,
+        channelParticipants: participantAddresses,
+        previousStateJson: stateFile.content, // state_snapshot.json from ZIP
+        senderIndex,
+      });
+
+      if (result.success && result.verified) {
+        setLogs((prev) => [
+          ...prev,
+          "✅ Proof generation completed!",
+          "✅ Verification PASSED!",
+        ]);
+
+        // Store new state snapshot for next transaction
+        if (result.newStateSnapshot) {
+          setNewStateSnapshot(result.newStateSnapshot);
+        }
+
+        setGenerationComplete(true);
+      } else {
+        throw new Error(result.error || "Verification failed");
       }
     } catch (error: any) {
       setLogs((prev) => [
@@ -397,7 +494,7 @@ const GenerateProof: React.FC = () => {
                 type="text"
                 value={channelId}
                 onChange={(e) => setChannelId(e.target.value)}
-                placeholder="Enter channel ID (e.g., 1)"
+                placeholder="Enter channel ID (e.g., 8)"
                 className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all"
                 style={{ padding: "10px 14px", fontSize: "14px" }}
               />
@@ -558,7 +655,36 @@ const GenerateProof: React.FC = () => {
                 )}
               </div>
 
-              {/* Recipient Address */}
+              {/* Sender Address (From) */}
+              <div>
+                <label
+                  className="block font-medium text-gray-300"
+                  style={{ fontSize: "16px", marginBottom: "12px" }}
+                >
+                  Sender Address (From)
+                  <span className="text-gray-500 text-sm ml-2">
+                    {/* TODO: In the future, automatically set to user's own address */}
+                  </span>
+                </label>
+                <select
+                  value={senderAddress}
+                  onChange={(e) => setSenderAddress(e.target.value)}
+                  className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all font-mono"
+                  style={{ padding: "14px 16px", fontSize: "15px" }}
+                >
+                  <option value="">Select sender...</option>
+                  {channelParticipants.map((participant, index) => (
+                    <option
+                      key={participant.address}
+                      value={participant.address}
+                    >
+                      Participant {index + 1}: {participant.address}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Recipient Address (To) */}
               <div>
                 <div
                   className="flex items-center justify-between"
@@ -568,7 +694,7 @@ const GenerateProof: React.FC = () => {
                     className="block font-medium text-gray-300"
                     style={{ fontSize: "16px" }}
                   >
-                    Recipient Address
+                    Recipient Address (To)
                   </label>
                   <div className="flex" style={{ gap: "8px" }}>
                     <button
@@ -606,17 +732,16 @@ const GenerateProof: React.FC = () => {
                   <select
                     value={recipientAddress}
                     onChange={(e) => setRecipientAddress(e.target.value)}
-                    className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all"
+                    className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all font-mono"
                     style={{ padding: "14px 16px", fontSize: "15px" }}
                   >
                     <option value="">Select a participant...</option>
-                    {channelParticipants.map((participant) => (
+                    {channelParticipants.map((participant, index) => (
                       <option
                         key={participant.address}
                         value={participant.address}
                       >
-                        {participant.label} - {participant.address.slice(0, 10)}
-                        ...{participant.address.slice(-8)}
+                        Participant {index + 1}: {participant.address}
                       </option>
                     ))}
                   </select>
@@ -734,10 +859,18 @@ const GenerateProof: React.FC = () => {
                 <button
                   onClick={handleGenerate}
                   disabled={
-                    !stateFile || !recipientAddress || !amount || isGenerating
+                    !stateFile ||
+                    !senderAddress ||
+                    !recipientAddress ||
+                    !amount.trim() ||
+                    isGenerating
                   }
                   className={`w-full flex items-center justify-center transition-all ${
-                    !stateFile || !recipientAddress || !amount || isGenerating
+                    !stateFile ||
+                    !senderAddress ||
+                    !recipientAddress ||
+                    !amount.trim() ||
+                    isGenerating
                       ? "bg-[#0a1930]/50 border border-[#4fc3f7]/20 text-gray-500 cursor-not-allowed"
                       : "bg-[#4fc3f7] hover:bg-[#029bee] border border-[#4fc3f7] text-white shadow-lg shadow-[#4fc3f7]/30"
                   }`}
@@ -754,8 +887,9 @@ const GenerateProof: React.FC = () => {
                     </span>
                     {!isGenerating &&
                       stateFile &&
+                      senderAddress &&
                       recipientAddress &&
-                      amount && <Check className="w-5 h-5" />}
+                      amount.trim() && <Check className="w-5 h-5" />}
                   </div>
                 </button>
               </div>

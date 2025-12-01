@@ -9,7 +9,7 @@ export interface AppSettings {
 
 const DEFAULT_SETTINGS: AppSettings = {
   rpcUrl: 'https://eth-sepolia.g.alchemy.com/v2/PbqCcGx1oHN7yNaFdUJUYqPEN0QSp23S', // Alchemy RPC (Tokamak zk-EVM 권장)
-  contractAddress: '0x0000000000000000000000000000000000000000', // 실제 컨트랙트 주소로 교체
+  contractAddress: '0x780ad1b236390C42479b62F066F5cEeAa4c77ad6', // RollupBridge Proxy (Sepolia testnet)
   chainId: 11155111, // Sepolia
 };
 

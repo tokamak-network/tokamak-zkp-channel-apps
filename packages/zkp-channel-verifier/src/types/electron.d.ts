@@ -1,5 +1,16 @@
 export interface SynthesizeAndProveOptions {
-  synthesizerOutputDir: string; // Path to directory containing instance.json, placementVariables.json, permutation.json
+  // Synthesizer inputs
+  rpcUrl: string;
+  contractAddress: string; // Token contract address (e.g., TON on Sepolia)
+  recipientAddress: string; // L1 recipient address (will be converted to L2)
+  amount: string; // Amount in smallest unit (wei/ray)
+  channelId: string; // Channel ID for fetching on-chain data
+  channelParticipants: string[]; // L1 addresses of channel participants
+  previousStateJson?: string; // JSON string of state_snapshot.json from ZIP
+  senderIndex?: number; // Index of sender in channelParticipants (default: 0)
+
+  // Output paths
+  synthesizerOutputDir?: string; // Where to save Synthesizer outputs (auto-generated if not provided)
   proveOutputDir?: string; // Optional: where to save proof files
 }
 
