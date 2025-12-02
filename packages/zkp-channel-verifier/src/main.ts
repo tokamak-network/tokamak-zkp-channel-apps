@@ -327,9 +327,10 @@ function setupIpcHandlers() {
         senderIndex,
       });
 
-      // Get RollupBridgeCore address (default Sepolia address)
-      const ROLLUP_BRIDGE_CORE_ADDRESS =
-        "0x780ad1b236390C42479b62F066F5cEeAa4c77ad6";
+      // Get RollupBridgeCore address from constants
+      const { ROLLUP_BRIDGE_CORE_ADDRESS } = await import(
+        "./constants/contracts"
+      );
 
       // Create output directories
       const finalSynthesizerOutputDir =
@@ -496,6 +497,57 @@ function setupIpcHandlers() {
       );
 
       return result;
+    }
+  );
+
+  // Get token balances from state snapshot
+  ipcMain.handle(
+    "get-token-balances",
+    async (
+      _event,
+      options: {
+        stateSnapshotJson: string;
+        tokenAddresses: string[];
+        balanceSlot?: number;
+      }
+    ) => {
+      try {
+        const { SynthesizerAdapter } = await import(
+          "@tokamak-zk-evm/synthesizer"
+        );
+        const stateSnapshot = JSON.parse(options.stateSnapshotJson);
+
+        // Create adapter instance (rpcUrl is not needed for this operation)
+        const adapter = new SynthesizerAdapter({
+          rpcUrl: "https://eth-sepolia.g.alchemy.com/v2/dummy", // Dummy URL, not used
+        });
+
+        const balances = adapter.getTokenBalancesFromSnapshot(
+          stateSnapshot,
+          options.tokenAddresses,
+          options.balanceSlot || 0
+        );
+
+        // Convert Map to plain object for IPC serialization
+        const balancesObj: Record<string, Record<string, string>> = {};
+        for (const [userAddress, tokenBalances] of balances.entries()) {
+          balancesObj[userAddress] = {};
+          for (const [tokenAddress, balance] of tokenBalances.entries()) {
+            balancesObj[userAddress][tokenAddress] = balance.toString();
+          }
+        }
+
+        return {
+          success: true,
+          balances: balancesObj,
+        };
+      } catch (error: any) {
+        console.error("[get-token-balances] Error:", error);
+        return {
+          success: false,
+          error: error.message,
+        };
+      }
     }
   );
 

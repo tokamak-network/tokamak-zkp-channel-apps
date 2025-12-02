@@ -14,13 +14,14 @@ import { readFileSync, existsSync, mkdirSync } from "fs";
 import { resolve } from "path";
 import { spawn } from "child_process";
 import { extractZip, readStateSnapshot } from "../src/utils/zipHelper";
+import {
+  ROLLUP_BRIDGE_CORE_ADDRESS,
+  WTON_ADDRESS,
+} from "../src/constants/contracts";
 
 const ALCHEMY_KEY = "PbqCcGx1oHN7yNaFdUJUYqPEN0QSp23S";
 const SEPOLIA_RPC_URL = `https://eth-sepolia.g.alchemy.com/v2/${ALCHEMY_KEY}`;
-const ROLLUP_BRIDGE_CORE_ADDRESS = "0x780ad1b236390C42479b62F066F5cEeAa4c77ad6";
 const CHANNEL_ID = 8; // Channel 8 uses WTON on Sepolia
-// WTON address on Sepolia (will be fetched from channel's allowedTokens)
-const WTON_ADDRESS = "0x79E0d92670106c85E9067b56B8F674340dCa0Bbd";
 
 // ============================================================================
 // HELPER FUNCTIONS
