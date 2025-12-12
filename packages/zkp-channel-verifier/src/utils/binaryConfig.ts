@@ -9,9 +9,8 @@
  * 2. Update BINARY_ROOT_DIR to point to local binaries
  */
 
-import { resolve } from "path";
-import { existsSync } from "fs";
-import { app } from "electron";
+import { resolve } from 'path';
+import { app } from 'electron';
 
 // Configuration: Switch between external and local binaries
 const USE_EXTERNAL_BINARIES = false;
@@ -19,27 +18,12 @@ const USE_EXTERNAL_BINARIES = false;
 // External binary path (Tokamak-zk-EVM)
 const EXTERNAL_BINARY_ROOT = resolve(
   __dirname,
-  "../../../../Tokamak-zk-EVM/dist/macOS"
+  '../../../../Tokamak-zk-EVM/dist/macOS'
 );
 
-// Local binary paths - try multiple locations
-const LOCAL_BINARY_CANDIDATES = [
-  resolve(__dirname, "../binaries"), // Built: .vite/build/utils/../binaries
-  resolve(__dirname, "../../src/binaries"), // Built: .vite/build/utils/../../src/binaries
-  resolve(__dirname, "../../../../src/binaries"), // Built: .vite/build/utils/../../../../src/binaries
-  resolve(process.cwd(), "src/binaries"), // Dev: src/binaries from cwd
-];
-
-// Find the first existing binary directory
-let LOCAL_BINARY_ROOT = LOCAL_BINARY_CANDIDATES[0];
-for (const candidate of LOCAL_BINARY_CANDIDATES) {
-  const testPath = resolve(candidate, "bin/preprocess");
-  if (existsSync(testPath)) {
-    LOCAL_BINARY_ROOT = candidate;
-    console.log(`[BinaryConfig] Found local binaries at: ${LOCAL_BINARY_ROOT}`);
-    break;
-  }
-}
+// Local binary path (zkp-channel-verifier)
+// In development: __dirname is .vite/build, so binaries are at ./binaries
+const LOCAL_BINARY_ROOT = resolve(__dirname, './binaries');
 
 // Select binary root based on configuration
 export const BINARY_ROOT_DIR = USE_EXTERNAL_BINARIES
@@ -48,28 +32,30 @@ export const BINARY_ROOT_DIR = USE_EXTERNAL_BINARIES
 
 // Binary paths
 export const BINARIES = {
-  preprocess: resolve(BINARY_ROOT_DIR, "bin/preprocess"),
-  prove: resolve(BINARY_ROOT_DIR, "bin/prove"),
-  verify: resolve(BINARY_ROOT_DIR, "bin/verify"),
-  trustedSetup: resolve(BINARY_ROOT_DIR, "bin/trusted-setup"),
+  preprocess: resolve(BINARY_ROOT_DIR, 'bin/preprocess'),
+  prove: resolve(BINARY_ROOT_DIR, 'bin/prove'),
+  verify: resolve(BINARY_ROOT_DIR, 'bin/verify'),
+  trustedSetup: resolve(BINARY_ROOT_DIR, 'bin/trusted-setup'),
+  synthesizer: resolve(BINARY_ROOT_DIR, 'bin/synthesizer'),
 };
+
+// Helper function to get binary path by name
+export function getBinaryPath(name: keyof typeof BINARIES): string {
+  return BINARIES[name];
+}
 
 // Resource paths
 export const RESOURCES = {
-  setup: resolve(BINARY_ROOT_DIR, "resource/setup/output"),
-  preprocess: resolve(BINARY_ROOT_DIR, "resource/preprocess/output"),
-  synthesizer: resolve(BINARY_ROOT_DIR, "resource/synthesizer/outputs"),
-  prove: resolve(BINARY_ROOT_DIR, "resource/prove/output"),
-  // qap-compiler library is in resource/qap-compiler/library (not subcircuits/library)
-  qap: resolve(BINARY_ROOT_DIR, "resource/qap-compiler/library"),
+  setup: resolve(BINARY_ROOT_DIR, 'resource/setup/output'),
+  preprocess: resolve(BINARY_ROOT_DIR, 'resource/preprocess/output'),
+  qap: resolve(BINARY_ROOT_DIR, 'resource/qap-compiler/library'),
 };
 
-// Temporary output directory (deprecated - use RESOURCES.synthesizer instead)
+// Temporary output directory
 export const getTempDir = (prefix: string) => {
-  // Use fixed synthesizer output directory instead of temp
-  return RESOURCES.synthesizer;
+  return resolve(app.getPath('userData'), 'temp', `${prefix}_${Date.now()}`);
 };
 
-console.log("[BinaryConfig] Using binaries from:", BINARY_ROOT_DIR);
-console.log("[BinaryConfig] Binary paths:", BINARIES);
-console.log("[BinaryConfig] Resource paths:", RESOURCES);
+console.log('[BinaryConfig] Using binaries from:', BINARY_ROOT_DIR);
+console.log('[BinaryConfig] Binary paths:', BINARIES);
+console.log('[BinaryConfig] Resource paths:', RESOURCES);

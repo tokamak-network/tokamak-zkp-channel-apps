@@ -140,3 +140,4 @@ vite.config.ts.timestamp-*
 
 # Binaries
 packages/zkp-channel-verifier/src/binaries/
+packages/zkp-channel-verifier/test-outputs/

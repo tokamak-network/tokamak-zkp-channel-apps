@@ -11,22 +11,78 @@ import {
   Check,
   Download,
   RefreshCw,
+  Database,
 } from "lucide-react";
 import Layout from "@/components/Layout";
 import {
   getChannelParticipants,
-  getChannelAllowedTokens,
+  getChannelTargetContract,
   getTokenSymbol,
   getChannelInfo,
   getChannelStateString,
 } from "@/contracts/RollupBridgeCore";
 import { storage } from "@/utils/storage";
+import { ethers } from "ethers";
 
 interface UploadedFile {
   name: string;
   path: string;
   content: string;
   isZip?: boolean; // true if this is a ZIP file (path points to extracted directory)
+}
+
+interface ChannelBalance {
+  address: string;
+  mptKey: string;
+  balance: string;
+}
+
+interface ChannelState {
+  stateRoot: string;
+  source: string;
+  participants: ChannelBalance[];
+}
+
+// Parse get-balances output
+function parseGetBalancesOutput(output: string): ChannelState | null {
+  try {
+    const lines = output.split("\n");
+    let stateRoot = "";
+    let source = "";
+    const participants: ChannelBalance[] = [];
+
+    let currentParticipant: Partial<ChannelBalance> = {};
+
+    for (const line of lines) {
+      if (line.includes("State Root:")) {
+        stateRoot = line.split("State Root:")[1].trim();
+      } else if (line.includes("Source:")) {
+        source = line.split("Source:")[1].trim();
+      } else if (line.match(/^\s+\d+\.\s+0x[a-fA-F0-9]{40}/)) {
+        // Participant address line (e.g., "  1. 0xF9Fa94D45C49e879E46Ea783fc133F41709f3bc7")
+        if (currentParticipant.address) {
+          participants.push(currentParticipant as ChannelBalance);
+        }
+        currentParticipant = {
+          address: line.match(/0x[a-fA-F0-9]{40}/)?.[0] || "",
+        };
+      } else if (line.includes("L2 MPT Key:")) {
+        currentParticipant.mptKey = line.split("L2 MPT Key:")[1].trim();
+      } else if (line.includes("Balance:")) {
+        currentParticipant.balance = line.split("Balance:")[1].trim();
+      }
+    }
+
+    // Add last participant
+    if (currentParticipant.address) {
+      participants.push(currentParticipant as ChannelBalance);
+    }
+
+    return { stateRoot, source, participants };
+  } catch (error) {
+    console.error("Failed to parse get-balances output:", error);
+    return null;
+  }
 }
 
 const GenerateProof: React.FC = () => {
@@ -43,17 +99,12 @@ const GenerateProof: React.FC = () => {
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationComplete, setGenerationComplete] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
-  const [newStateSnapshot, setNewStateSnapshot] = useState<string | null>(null);
-  const [proofFiles, setProofFiles] = useState<{
-    instance: string;
-    placementVariables: string;
-    permutation: string;
-    stateSnapshot: string;
-    proof: string;
-  } | null>(null);
+  // TODO: Restore ZIP download functionality later
+  // const [outputZipPath, setOutputZipPath] = useState<string | null>(null);
+  const [newStateSnapshot, setNewStateSnapshot] = useState<string | null>(null); // For development: direct state_snapshot.json download
 
   // 온체인 데이터
-  const [channelId, setChannelId] = useState<string>("8"); // 채널 ID (기본값: 8, Sepolia testnet)
+  const [channelId, setChannelId] = useState<string>("3"); // 채널 ID (기본값: 3, Sepolia testnet)
   const [supportedTokens, setSupportedTokens] = useState<string[]>([
     "ETH",
     "WTON",
@@ -72,6 +123,49 @@ const GenerateProof: React.FC = () => {
     },
   ]);
   const [isLoadingChannelData, setIsLoadingChannelData] = useState(false);
+  
+  // Channel state
+  const [channelState, setChannelState] = useState<ChannelState | null>(null);
+  const [isLoadingState, setIsLoadingState] = useState(false);
+  const [initialRoot, setInitialRoot] = useState<string>(""); // Channel's initial root
+
+  // Load channel state on channelId change
+  useEffect(() => {
+    if (!channelId) {
+      setChannelState(null);
+      return;
+    }
+
+    const loadChannelState = async () => {
+      setIsLoadingState(true);
+      
+      try {
+        const settings = storage.getSettings();
+        const rpcUrl = settings.rpcUrl;
+        
+        // Call get-balances without snapshot (on-chain initial state)
+        const result = await window.electron.invoke("get-balances", {
+          channelId,
+          rpcUrl,
+          network: "sepolia",
+        });
+
+        if (result.success) {
+          // Parse output to extract state root and participants
+          const parsed = parseGetBalancesOutput(result.output);
+          setChannelState(parsed);
+        } else {
+          console.error("Failed to load channel state:", result.error);
+        }
+      } catch (error: any) {
+        console.error("Failed to load channel state:", error);
+      } finally {
+        setIsLoadingState(false);
+      }
+    };
+
+    loadChannelState();
+  }, [channelId]);
 
   // 채널 데이터를 온체인에서 가져오는 함수
   const fetchChannelData = async () => {
@@ -95,13 +189,16 @@ const GenerateProof: React.FC = () => {
       const channelState = Number(channelInfo.state);
       const channelStateName = getChannelStateString(channelState);
 
+      // Store initial root
+      setInitialRoot(channelInfo.initialRoot);
+
       setLogs((prev) => [
         ...prev,
         `✅ Channel info fetched`,
         `   - State: ${channelStateName} (${channelState})`,
         `   - Participants: ${channelInfo.participantCount}`,
         `   - Initial Root: ${channelInfo.initialRoot.substring(0, 20)}...`,
-        `   - Allowed Tokens: ${channelInfo.allowedTokens.length}`,
+        `   - Target Contract: ${channelInfo.targetContract}`,
       ]);
 
       // 2. Get participants list
@@ -124,39 +221,19 @@ const GenerateProof: React.FC = () => {
         ...participants.map((addr, idx) => `   ${idx + 1}. ${addr}`),
       ]);
 
-      // 3. Get allowed tokens
-      const tokens =
-        channelInfo.allowedTokens ||
-        (await getChannelAllowedTokens(channelIdBigInt));
+      // 3. Get target contract (token address)
+      const targetContract = channelInfo.targetContract;
 
-      // Store token addresses for later use
-      setAllowedTokenAddresses([...tokens]); // Convert readonly array to mutable array
+      // Store token address for later use
+      setAllowedTokenAddresses([targetContract]);
 
-      const tokenSymbols = tokens.map(getTokenSymbol);
-      setSupportedTokens(tokenSymbols);
-
-      // First token as default selection
-      if (tokenSymbols.length > 0) {
-        setSelectedToken(tokenSymbols[0]);
-      }
-
-      // Set first participant as default sender (from)
-      // TODO: In the future, automatically set to user's own address
-      if (participants.length > 0) {
-        setSenderAddress(participants[0]);
-      }
+      const tokenSymbol = getTokenSymbol(targetContract);
+      setSupportedTokens([tokenSymbol]);
+      setSelectedToken(tokenSymbol);
 
       setLogs((prev) => [
         ...prev,
-        `✅ Allowed tokens: ${tokens.length}`,
-        ...tokens.map(
-          (addr, idx) => `   ${idx + 1}. ${getTokenSymbol(addr)} (${addr})`
-        ),
-      ]);
-
-      setLogs((prev) => [
-        ...prev,
-        `✅ Allowed tokens: ${tokenSymbols.join(", ")}`,
+        `✅ Supported token: ${tokenSymbol} (${targetContract})`,
         `✅ Channel ${channelId} data loaded successfully`,
       ]);
     } catch (error: any) {
@@ -215,6 +292,53 @@ const GenerateProof: React.FC = () => {
             stateInfo || "📄 No state_snapshot.json found in ZIP",
             `✅ Ready to generate proof from extracted files`,
           ]);
+
+          // Load balances from uploaded state snapshot
+          if (result.stateSnapshot && channelId) {
+            setIsLoadingState(true);
+            setLogs((prev) => [
+              ...prev,
+              `🔍 Loading balances from uploaded state snapshot...`,
+            ]);
+
+            try {
+              const settings = storage.getSettings();
+              const rpcUrl = settings.rpcUrl;
+
+              // Find state_snapshot.json in extracted directory
+              const snapshotPath = `${result.extractedDir}/state_snapshot.json`;
+
+              // Call get-balances with snapshot path
+              const balancesResult = await window.electron.invoke("get-balances", {
+                channelId,
+                snapshotPath,
+                rpcUrl,
+                network: "sepolia",
+              });
+
+              if (balancesResult.success) {
+                const parsed = parseGetBalancesOutput(balancesResult.output);
+                setChannelState(parsed);
+                setLogs((prev) => [
+                  ...prev,
+                  `✅ Loaded balances from uploaded state`,
+                ]);
+              } else {
+                setLogs((prev) => [
+                  ...prev,
+                  `⚠️ Failed to load balances: ${balancesResult.error}`,
+                ]);
+              }
+            } catch (error: any) {
+              console.error("Failed to load balances from snapshot:", error);
+              setLogs((prev) => [
+                ...prev,
+                `⚠️ Failed to load balances: ${error.message}`,
+              ]);
+            } finally {
+              setIsLoadingState(false);
+            }
+          }
         } else {
           // JSON file: decode base64 content using atob (browser-compatible)
           if (!result.content) {
@@ -222,12 +346,12 @@ const GenerateProof: React.FC = () => {
           }
           const jsonContent = atob(result.content);
 
-          setStateFile({
-            name: result.filePath.split("/").pop() || "unknown",
-            path: result.filePath,
+        setStateFile({
+          name: result.filePath.split("/").pop() || "unknown",
+          path: result.filePath,
             content: jsonContent, // Store as plain JSON string
             isZip: false,
-          });
+        });
           setLogs((prev) => [
             ...prev,
             `📄 JSON file loaded: ${result.filePath.split("/").pop()}`,
@@ -352,8 +476,8 @@ const GenerateProof: React.FC = () => {
       });
 
       if (result.success && result.verified) {
-        setLogs((prev) => [
-          ...prev,
+      setLogs((prev) => [
+        ...prev,
           "✅ Proof generation completed!",
           "✅ Verification PASSED!",
         ]);
@@ -363,39 +487,7 @@ const GenerateProof: React.FC = () => {
           setNewStateSnapshot(result.newStateSnapshot);
         }
 
-        // Store proof files for ZIP download
-        if (result.files) {
-          const filesToStore = {
-            instance: result.files.synthesizer.instance,
-            placementVariables: result.files.synthesizer.placementVariables,
-            permutation: result.files.synthesizer.permutation,
-            stateSnapshot: result.files.synthesizer.stateSnapshot,
-            proof: result.files.proof,
-          };
-
-          console.log(
-            "[GenerateProof] Storing proof files for download:",
-            filesToStore
-          );
-          setProofFiles(filesToStore);
-
-          setLogs((prev) => [
-            ...prev,
-            "📁 Proof files stored for download",
-            `   - Instance: ${result.files.synthesizer.instance}`,
-            `   - Proof: ${result.files.proof}`,
-          ]);
-        } else {
-          console.warn(
-            "[GenerateProof] No files in result, cannot store for download"
-          );
-          setLogs((prev) => [
-            ...prev,
-            "⚠️ Warning: No file paths returned from proof generation",
-          ]);
-        }
-
-        setGenerationComplete(true);
+      setGenerationComplete(true);
       } else {
         throw new Error(result.error || "Verification failed");
       }
@@ -432,114 +524,25 @@ const GenerateProof: React.FC = () => {
   //   }
   // };
 
-  // Test function to set test data for download button
-  // Note: In production, proof files are created at:
-  // - Synthesizer outputs: resource/synthesizer/outputs/
-  // - Proof file: resource/prove/output/proof.json
-  const handleTestDownloadButton = () => {
-    console.log("[handleTestDownloadButton] Setting test data...");
-
-    // Use test output directory files for testing
-    // In production, these would be in:
-    // - .vite/binaries/resource/synthesizer/outputs/ (synthesizer files)
-    // - .vite/binaries/resource/prove/output/ (proof file)
-    const testOutputDir =
-      "/Users/son-yeongseong/Desktop/dev/tokamak-zkp-channel-apps/packages/zkp-channel-verifier/test-outputs/test-synthesizer";
-    // Proof is in resource/prove/output/
-    const testProofDir =
-      "/Users/son-yeongseong/Desktop/dev/tokamak-zkp-channel-apps/packages/zkp-channel-verifier/test-outputs/proof";
-
-    const testFiles = {
-      instance: `${testOutputDir}/instance.json`,
-      placementVariables: `${testOutputDir}/placementVariables.json`,
-      permutation: `${testOutputDir}/permutation.json`,
-      stateSnapshot: `${testOutputDir}/state_snapshot.json`,
-      proof: `${testProofDir}/proof.json`,
-    };
-
-    console.log("[handleTestDownloadButton] Test files:", testFiles);
-
-    setProofFiles(testFiles);
-    setGenerationComplete(true);
-    setLogs((prev) => [
-      ...prev,
-      "🧪 Test mode activated - Download button should now be visible",
-      `📁 Using test files from: ${testOutputDir}`,
-      `📁 Proof file from: ${testProofDir}`,
-      "⚠️ Note: Some files may not exist, but this tests the download functionality",
-    ]);
-  };
-
-  // Download proof files as ZIP
+  // For development: Download state_snapshot.json directly
   const handleDownloadStateSnapshot = async () => {
-    console.log("[handleDownloadStateSnapshot] Button clicked");
-    console.log(
-      "[handleDownloadStateSnapshot] Current proofFiles state:",
-      proofFiles
-    );
-
-    if (!proofFiles) {
-      const errorMsg = "❌ Proof files not available for download";
-      console.error("[handleDownloadStateSnapshot]", errorMsg);
-      setLogs((prev) => [...prev, errorMsg]);
-      return;
-    }
-
-    // Log detailed file information
-    console.log("[handleDownloadStateSnapshot] Files to be included in ZIP:");
-    for (const [key, filePath] of Object.entries(proofFiles)) {
-      console.log(`  - ${key}: ${filePath}`);
-    }
+    if (!newStateSnapshot) return;
 
     try {
-      setLogs((prev) => [...prev, "📦 Creating ZIP file..."]);
-      console.log(
-        "[handleDownloadStateSnapshot] Creating ZIP with files:",
-        proofFiles
+      const content = Buffer.from(newStateSnapshot, "utf-8");
+      const result = await window.electronAPI.saveFile(
+        "state_snapshot.json",
+        content
       );
 
-      // Create ZIP file
-      const zipResult = await window.electronAPI.createProofZip(proofFiles);
-      console.log("[handleDownloadStateSnapshot] ZIP creation result:", {
-        success: zipResult.success,
-        hasBuffer: !!zipResult.zipBuffer,
-        error: zipResult.error,
-      });
-
-      if (!zipResult.success || !zipResult.zipBuffer) {
-        throw new Error(zipResult.error || "Failed to create ZIP file");
-      }
-
-      // Pass base64 string directly - main process will convert to Buffer
-      console.log(
-        "[handleDownloadStateSnapshot] ZIP buffer size (base64):",
-        zipResult.zipBuffer.length
-      );
-
-      // Save ZIP file
-      setLogs((prev) => [...prev, "💾 Opening save dialog..."]);
-      console.log("[handleDownloadStateSnapshot] Calling saveFile...");
-
-      const saveResult = await window.electronAPI.saveFile(
-        "proof_output.zip",
-        zipResult.zipBuffer // Pass base64 string directly
-      );
-
-      console.log("[handleDownloadStateSnapshot] Save result:", saveResult);
-
-      if (saveResult.success) {
+      if (result.success) {
         setLogs((prev) => [
           ...prev,
-          `✅ Proof ZIP file saved: ${saveResult.filePath}`,
-          "📄 ZIP contains: instance.json, placementVariables.json, permutation.json, state_snapshot.json, proof.json",
+          `✅ State snapshot saved: ${result.filePath}`,
         ]);
-      } else {
-        throw new Error("User cancelled save dialog or save failed");
       }
     } catch (error: any) {
-      const errorMsg = `❌ ZIP download failed: ${error.message}`;
-      console.error("[handleDownloadStateSnapshot] Error:", error);
-      setLogs((prev) => [...prev, errorMsg]);
+      setLogs((prev) => [...prev, `❌ File save failed: ${error.message}`]);
     }
   };
 
@@ -558,34 +561,124 @@ const GenerateProof: React.FC = () => {
           </button>
 
           <div
-            className="flex items-center justify-between"
-            style={{ marginBottom: "48px" }}
+            className="flex items-center"
+            style={{ gap: "16px", marginBottom: "48px" }}
           >
-            <div className="flex items-center" style={{ gap: "16px" }}>
-              <div className="bg-[#4fc3f7] p-3 rounded">
-                <Plus className="w-6 h-6 text-white" />
+            <div className="bg-[#4fc3f7] p-3 rounded">
+              <Plus className="w-6 h-6 text-white" />
               </div>
-              <div>
-                <h1 className="text-2xl font-bold text-white">
-                  Generate Proof
-                </h1>
-                <p className="text-sm text-gray-400">
-                  Create new proofs based on your channel state and transaction
-                  details.
-                </p>
+            <div>
+              <h1 className="text-2xl font-bold text-white">Generate Proof</h1>
+              <p className="text-sm text-gray-400">
+                Create new proofs based on your channel state and transaction
+                details.
+              </p>
+            </div>
+        </div>
+
+          {/* Channel State */}
+          {channelState && (
+            <div
+              className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border border-[#4fc3f7] shadow-lg shadow-[#4fc3f7]/20"
+              style={{ padding: "24px", marginBottom: "32px" }}
+            >
+              <div className="flex items-center" style={{ gap: "12px", marginBottom: "20px" }}>
+                <div className="bg-[#4fc3f7] p-2 rounded">
+                  <Database className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-bold text-white">Channel State</h2>
+                  <p className="text-sm text-gray-400">
+                    {channelState.source}
+                  </p>
+                </div>
+              </div>
+
+              {/* State Roots Comparison */}
+              <div className="space-y-3 mb-4">
+                {/* Initial Root */}
+                <div className="bg-[#0a1930]/50 p-4 rounded">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-sm text-gray-400">Initial Root:</div>
+                    <div className="text-xs text-gray-500 bg-gray-700/50 px-2 py-1 rounded">
+                      On-chain
+                    </div>
+                  </div>
+                  <div className="font-mono text-xs text-gray-300 break-all">
+                    {initialRoot || "Not loaded"}
+                  </div>
+                </div>
+
+                {/* Current Root */}
+                <div className="bg-[#0a1930]/50 p-4 rounded">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-sm text-gray-400">Current Root:</div>
+                    {channelState.stateRoot === initialRoot ? (
+                      <div className="text-xs text-green-400 bg-green-500/20 px-2 py-1 rounded">
+                        ✓ Initial State
+                      </div>
+                    ) : (
+                      <div className="text-xs text-yellow-400 bg-yellow-500/20 px-2 py-1 rounded">
+                        Modified
+                      </div>
+                    )}
+                  </div>
+                  <div className="font-mono text-xs text-[#4fc3f7] break-all">
+                    {channelState.stateRoot}
+                  </div>
+                  {channelState.stateRoot === initialRoot && (
+                    <div className="text-xs text-gray-500 mt-2">
+                      This is the initial state with deposits only. No transactions have been processed yet.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Participants */}
+              <div className="text-sm text-gray-400 mb-2">Participants:</div>
+              <div className="space-y-3">
+                {channelState.participants.map((participant, idx) => (
+                  <div
+                    key={idx}
+                    className="bg-[#0a1930]/50 p-4 rounded border border-[#4fc3f7]/20"
+                  >
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex-1">
+                        <div className="text-xs text-gray-500 mb-1">
+                          Participant {idx + 1}
+                        </div>
+                        <div className="font-mono text-xs text-white break-all">
+                          {participant.address}
+                        </div>
+                      </div>
+                      <div className="text-right ml-4">
+                        <div className="text-xs text-gray-500 mb-1">Balance</div>
+                        <div className="font-bold text-[#4fc3f7]">
+                          {participant.balance}
+                        </div>
+                      </div>
+                    </div>
+                    <div className="text-xs text-gray-500 mt-2">L2 MPT Key:</div>
+                    <div className="font-mono text-xs text-gray-400 break-all mt-1">
+                      {participant.mptKey}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
-            {/* Test Button for Download Functionality */}
-            <button
-              type="button"
-              onClick={handleTestDownloadButton}
-              className="px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white text-sm font-semibold transition-all flex items-center gap-2 rounded"
-              title="Test download button with test data"
+          )}
+
+          {isLoadingState && (
+            <div
+              className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border border-[#4fc3f7]/50 shadow-lg"
+              style={{ padding: "24px", marginBottom: "32px" }}
             >
-              <Zap className="w-4 h-4" />
-              Test Download
-            </button>
-          </div>
+              <div className="flex items-center justify-center" style={{ gap: "12px" }}>
+                <RefreshCw className="w-5 h-5 text-[#4fc3f7] animate-spin" />
+                <span className="text-gray-300">Loading channel state...</span>
+              </div>
+            </div>
+          )}
 
           {/* Generation Overview (통합) */}
           <div
@@ -603,7 +696,7 @@ const GenerateProof: React.FC = () => {
                 <div>
                   <h2 className="text-lg font-bold text-white">
                     Generation Overview
-                  </h2>
+          </h2>
                   <p className="text-sm text-gray-400">
                     Current generation status and requirements
                   </p>
@@ -795,33 +888,33 @@ const GenerateProof: React.FC = () => {
                 )}
               </div>
 
-              {/* Sender Address (From) */}
+              {/* Sender Private Key (From) */}
               <div>
                 <label
                   className="block font-medium text-gray-300"
                   style={{ fontSize: "16px", marginBottom: "12px" }}
                 >
                   Sender Address (From)
-                  <span className="text-gray-500 text-sm ml-2">
-                    {/* TODO: In the future, automatically set to user's own address */}
-                  </span>
                 </label>
                 <select
                   value={senderAddress}
                   onChange={(e) => setSenderAddress(e.target.value)}
-                  className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all font-mono"
+                  className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all"
                   style={{ padding: "14px 16px", fontSize: "15px" }}
                 >
-                  <option value="">Select sender...</option>
-                  {channelParticipants.map((participant, index) => (
-                    <option
-                      key={participant.address}
-                      value={participant.address}
-                    >
-                      Participant {index + 1}: {participant.address}
+                  <option value="">Select sender address...</option>
+                  {channelParticipants.map((p, idx) => (
+                    <option key={idx} value={p.address}>
+                      {p.label} - {p.address}
                     </option>
                   ))}
                 </select>
+                <p
+                  className="text-gray-400"
+                  style={{ fontSize: "12px", marginTop: "8px" }}
+                >
+                  Select the sender address from channel participants.
+                </p>
               </div>
 
               {/* Recipient Address (To) */}
@@ -886,11 +979,11 @@ const GenerateProof: React.FC = () => {
                     ))}
                   </select>
                 ) : (
-                  <input
-                    type="text"
-                    value={recipientAddress}
-                    onChange={(e) => setRecipientAddress(e.target.value)}
-                    placeholder="0x..."
+              <input
+                type="text"
+                value={recipientAddress}
+                onChange={(e) => setRecipientAddress(e.target.value)}
+                placeholder="0x..."
                     className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all font-mono"
                     style={{ padding: "14px 16px", fontSize: "15px" }}
                   />
@@ -925,21 +1018,21 @@ const GenerateProof: React.FC = () => {
                     </button>
                   ))}
                 </div>
-              </div>
+            </div>
 
               {/* Transfer Amount */}
-              <div>
+            <div>
                 <label
                   className="block font-medium text-gray-300"
                   style={{ fontSize: "16px", marginBottom: "12px" }}
                 >
                   Transfer Amount
-                </label>
+              </label>
                 <div className="relative">
-                  <input
-                    type="text"
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
+              <input
+                type="text"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
                     placeholder={
                       selectedToken === "ETH"
                         ? "e.g., 1000000000000000000 (1 ETH in wei)"
@@ -991,14 +1084,14 @@ const GenerateProof: React.FC = () => {
                         " smallest unit"}
                     </span>
                   </p>
-                </div>
-              </div>
+          </div>
+        </div>
 
               {/* Generate Proof Button */}
               <div style={{ marginTop: "32px" }}>
-                <button
-                  onClick={handleGenerate}
-                  disabled={
+          <button
+            onClick={handleGenerate}
+            disabled={
                     !stateFile ||
                     !senderAddress ||
                     !recipientAddress ||
@@ -1031,13 +1124,13 @@ const GenerateProof: React.FC = () => {
                       recipientAddress &&
                       amount.trim() && <Check className="w-5 h-5" />}
                   </div>
-                </button>
+          </button>
               </div>
             </div>
-          </div>
+        </div>
 
-          {/* Logs Section */}
-          {logs.length > 0 && (
+        {/* Logs Section */}
+        {logs.length > 0 && (
             <div
               className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border border-[#4fc3f7]/30"
               style={{ padding: "32px", marginBottom: "48px" }}
@@ -1049,16 +1142,16 @@ const GenerateProof: React.FC = () => {
                 Execution Logs
               </h3>
               <div className="bg-black/50 border border-[#4fc3f7]/20 p-4 max-h-60 overflow-y-auto font-mono text-xs">
-                {logs.map((log, index) => (
-                  <div key={index} className="text-gray-300 mb-1">
-                    {log}
-                  </div>
-                ))}
-              </div>
+              {logs.map((log, index) => (
+                <div key={index} className="text-gray-300 mb-1">
+                  {log}
+                </div>
+              ))}
             </div>
-          )}
+          </div>
+        )}
 
-          {/* Download Section */}
+        {/* Download Section */}
           {/* TODO: Restore ZIP download functionality later */}
           {/* {generationComplete && outputZipPath && (
             <div className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border-2 border-green-500" style={{ padding: "40px", marginBottom: "48px" }}>
@@ -1086,8 +1179,8 @@ const GenerateProof: React.FC = () => {
             </div>
           )} */}
 
-          {/* Download Proof Files as ZIP */}
-          {generationComplete && proofFiles && (
+          {/* Development: Direct state_snapshot.json download */}
+          {generationComplete && newStateSnapshot && (
             <div
               className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border-2 border-green-500"
               style={{ padding: "40px", marginBottom: "48px" }}
@@ -1104,24 +1197,14 @@ const GenerateProof: React.FC = () => {
                     Your proof has been successfully generated and verified.
                   </p>
                   <button
-                    type="button"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      console.log("[Button] Click event fired");
-                      handleDownloadStateSnapshot();
-                    }}
-                    className="px-6 py-3 bg-green-500 hover:bg-green-600 text-white font-semibold transition-all flex items-center gap-2 cursor-pointer"
+                    onClick={handleDownloadStateSnapshot}
+                    className="px-6 py-3 bg-green-500 hover:bg-green-600 text-white font-semibold transition-all flex items-center gap-2"
                   >
                     <Download className="w-5 h-5" />
-                    Download Proof Files (ZIP)
+                    Download State Snapshot (JSON)
                   </button>
                   <p className="text-gray-400 text-xs mt-4">
-                    ZIP contains: instance.json, placementVariables.json,
-                    permutation.json, state_snapshot.json, and proof.json
-                  </p>
-                  <p className="text-gray-400 text-xs mt-2">
-                    The state_snapshot.json can be used as previousState for the
+                    This state snapshot can be used as previousState for the
                     next transaction
                   </p>
                 </div>

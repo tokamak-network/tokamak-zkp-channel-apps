@@ -1,7 +1,11 @@
 // 설정 저장을 위한 유틸리티
 // electron-store를 사용하여 영구 저장
 
-import { ROLLUP_BRIDGE_CORE_ADDRESS } from '../constants/contracts';
+import {
+  SEPOLIA_RPC_URL,
+  ROLLUP_BRIDGE_CORE_ADDRESS,
+  NETWORK_CONFIG,
+} from "../constants/contracts";
 
 export interface AppSettings {
   rpcUrl: string;
@@ -10,10 +14,9 @@ export interface AppSettings {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
-  rpcUrl:
-    "https://eth-sepolia.g.alchemy.com/v2/PbqCcGx1oHN7yNaFdUJUYqPEN0QSp23S", // Alchemy RPC (Tokamak zk-EVM 권장)
-  contractAddress: ROLLUP_BRIDGE_CORE_ADDRESS, // RollupBridgeCore on Sepolia
-  chainId: 11155111, // Sepolia
+  rpcUrl: SEPOLIA_RPC_URL,
+  contractAddress: ROLLUP_BRIDGE_CORE_ADDRESS,
+  chainId: NETWORK_CONFIG.SEPOLIA.CHAIN_ID,
 };
 
 // LocalStorage를 사용한 설정 관리 (Electron 환경에서 electron-store로 교체 가능)

@@ -39,44 +39,42 @@ export interface SynthesizerResult {
 
 /**
  * Find synthesizer binary path
- * Looks for the binary in the Electron app's binaries directory
  */
 function findSynthesizerBinary(): string | null {
-  // In Electron app, binary is bundled in src/binaries/bin/synthesizer
-  // __dirname in compiled code will be in the app's resources
-  const appBinaryPath = resolve(__dirname, "../binaries/bin/synthesizer");
+  const tokamakRoot = resolve(__dirname, "../../../../Tokamak-zk-EVM");
 
-  if (existsSync(appBinaryPath)) {
-    console.log(`[Synthesizer] Found app binary: ${appBinaryPath}`);
-    return appBinaryPath;
-  }
-
-  // Development mode: try relative to src
-  const devBinaryPaths = [
-    resolve(__dirname, "../../src/binaries/bin/synthesizer"),
-    resolve(__dirname, "../../../src/binaries/bin/synthesizer"),
+  // Try dist/macOS/bin/synthesizer first (production)
+  const distPaths = [
+    resolve(tokamakRoot, "dist/macOS/bin/synthesizer"),
+    resolve(tokamakRoot, "dist/linux/bin/synthesizer"),
+    resolve(tokamakRoot, "dist/windows/bin/synthesizer.exe"),
   ];
 
-  for (const path of devBinaryPaths) {
+  for (const path of distPaths) {
     if (existsSync(path)) {
-      console.log(`[Synthesizer] Found dev binary: ${path}`);
       return path;
     }
   }
 
-  // Fallback: try external Tokamak-zk-EVM path (for development only)
-  const tokamakRoot = resolve(__dirname, "../../../../Tokamak-zk-EVM");
-  const fallbackPaths = [
-    resolve(tokamakRoot, "dist/macOS/bin/synthesizer"),
+  // Try synthesizer package bin directory (development)
+  const synthesizerBinPaths = [
+    resolve(tokamakRoot, "packages/frontend/synthesizer/bin/synthesizer-final"),
     resolve(
       tokamakRoot,
       "packages/frontend/synthesizer/bin/synthesizer-macos-arm64"
     ),
+    resolve(
+      tokamakRoot,
+      "packages/frontend/synthesizer/bin/synthesizer-macos-x64"
+    ),
+    resolve(
+      tokamakRoot,
+      "packages/frontend/synthesizer/bin/synthesizer-linux-x64"
+    ),
   ];
 
-  for (const path of fallbackPaths) {
+  for (const path of synthesizerBinPaths) {
     if (existsSync(path)) {
-      console.warn(`[Synthesizer] Using external binary (fallback): ${path}`);
       return path;
     }
   }
@@ -116,13 +114,23 @@ export async function runSynthesizer(
     // Save previous state to temporary file if provided
     let previousStatePath: string | undefined = undefined;
     if (options.previousStateJson) {
-      previousStatePath = resolve(
-        tmpdir(),
-        `previous-state-${Date.now()}.json`
-      );
-      // Write the original JSON string directly without any processing
-      writeFileSync(previousStatePath, options.previousStateJson);
-      console.log("[Synthesizer] Previous state file created");
+      try {
+        const previousState = JSON.parse(options.previousStateJson);
+        previousStatePath = resolve(
+          tmpdir(),
+          `previous-state-${Date.now()}.json`
+        );
+        writeFileSync(
+          previousStatePath,
+          JSON.stringify(previousState, null, 2)
+        );
+        console.log(
+          "[Synthesizer] Previous state loaded:",
+          previousState.stateRoot
+        );
+      } catch (e) {
+        console.warn("[Synthesizer] Failed to parse previousStateJson:", e);
+      }
     }
 
     // Build command arguments
@@ -246,7 +254,7 @@ export async function runSynthesizer(
       });
     });
   } catch (error: any) {
-    console.error("[Synthesizer] Error:", error);
+    console.error('[Synthesizer] Error:', error);
     return {
       success: false,
       error: error.message || String(error),

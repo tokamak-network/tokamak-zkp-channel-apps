@@ -1,46 +1,33 @@
-import { defineConfig } from "vite";
-import { copyFileSync, mkdirSync, readdirSync, statSync, existsSync } from "fs";
-import { resolve, join } from "path";
+import { defineConfig, Plugin } from "vite";
+import path from "node:path";
+import fs from "node:fs";
 
-// Custom plugin to copy binaries
-function copyBinaries() {
+// Custom plugin to copy binaries to the build output directory
+function copyBinariesPlugin(): Plugin {
   return {
-    name: 'copy-binaries',
-    writeBundle() {
-      const srcDir = resolve(__dirname, 'src/binaries');
-      const destDir = resolve(__dirname, '.vite/binaries');
-      
-      if (!existsSync(srcDir)) {
-        console.warn('[copy-binaries] Source directory not found:', srcDir);
-        return;
+    name: "copy-binaries",
+    buildStart() {
+      const srcDir = path.resolve(__dirname, "src/binaries");
+      const destDir = path.resolve(__dirname, ".vite/build/binaries");
+
+      // Copy binaries directory recursively
+      if (fs.existsSync(srcDir)) {
+        console.log(`[copy-binaries] Copying ${srcDir} to ${destDir}`);
+        fs.cpSync(srcDir, destDir, { recursive: true, force: true });
+        console.log("[copy-binaries] Copy completed successfully");
+      } else {
+        console.warn(`[copy-binaries] Source directory not found: ${srcDir}`);
       }
-
-      function copyRecursive(src: string, dest: string) {
-        if (!existsSync(dest)) {
-          mkdirSync(dest, { recursive: true });
-        }
-
-        const entries = readdirSync(src);
-        for (const entry of entries) {
-          const srcPath = join(src, entry);
-          const destPath = join(dest, entry);
-          
-          if (statSync(srcPath).isDirectory()) {
-            copyRecursive(srcPath, destPath);
-          } else {
-            copyFileSync(srcPath, destPath);
-            console.log('[copy-binaries] Copied:', entry);
-          }
-        }
-      }
-
-      console.log('[copy-binaries] Copying binaries from', srcDir, 'to', destDir);
-      copyRecursive(srcDir, destDir);
     },
   };
 }
 
 export default defineConfig({
-  plugins: [copyBinaries()],
+  plugins: [copyBinariesPlugin()],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
 });
 
