@@ -162,7 +162,7 @@ function setupIpcHandlers() {
 
       if (isZip) {
         // Extract ZIP file to temporary directory
-        const { extractZip, readStateSnapshot } = await import(
+        const { extractZip, readStateSnapshot, readChannelInfo } = await import(
           "./utils/zipHelper"
         );
         const extractedDir = await extractZip(filePath);
@@ -170,12 +170,18 @@ function setupIpcHandlers() {
         // Try to read state_snapshot.json if it exists
         const stateSnapshot = readStateSnapshot(extractedDir);
 
+        // Try to read channel-info.json if it exists
+        const channelInfo = readChannelInfo(extractedDir);
+
         return {
           filePath,
           extractedDir,
           isZip: true,
           stateSnapshot: stateSnapshot
             ? JSON.stringify(stateSnapshot)
+            : undefined,
+          channelInfo: channelInfo
+            ? JSON.stringify(channelInfo)
             : undefined,
         };
       } else {
@@ -191,13 +197,27 @@ function setupIpcHandlers() {
     return null;
   });
 
+  // Read file handler
+  ipcMain.handle("read-file", async (event, filePath: string) => {
+    try {
+      const content = await fs.promises.readFile(filePath);
+      return { success: true, content: content.toString("base64") };
+    } catch (error: any) {
+      return { success: false, error: error.message };
+    }
+  });
+
   // Save file handler
   ipcMain.handle(
     "save-file",
     async (event, defaultFileName: string, content: string | Buffer) => {
       const { filePath } = await dialog.showSaveDialog({
         defaultPath: defaultFileName,
-        filters: [{ name: "JSON Files", extensions: ["json"] }],
+        filters: [
+          { name: "ZIP Files", extensions: ["zip"] },
+          { name: "JSON Files", extensions: ["json"] },
+          { name: "All Files", extensions: ["*"] },
+        ],
       });
       if (filePath) {
         // Convert base64 string to Buffer if needed
@@ -514,6 +534,147 @@ function setupIpcHandlers() {
         return {
           success: false,
           error: error.message || "Failed to get balances",
+          stderr: error.stderr || "",
+          stdout: error.stdout || "",
+        };
+      }
+    }
+  );
+
+  // L2 Transfer using synthesizer
+  ipcMain.handle(
+    "l2-transfer",
+    async (
+      event,
+      options: {
+        channelId: string;
+        initTx?: string;
+        senderKey: string;
+        recipient: string;
+        amount: string;
+        previousState?: string;
+        outputDir: string;
+        rpcUrl: string;
+        network: string;
+      }
+    ) => {
+      const { execFile } = await import("child_process");
+      const { promisify } = await import("util");
+      const execFileAsync = promisify(execFile);
+      const { getBinaryPath, BINARY_ROOT_DIR } = await import("./utils/binaryConfig");
+      const path = await import("path");
+      const fs = await import("fs/promises");
+      const os = await import("os");
+
+      try {
+        const synthesizerPath = getBinaryPath("synthesizer");
+        
+        // Create absolute output directory path
+        const timestamp = Date.now();
+        const outputDirName = `tx-${timestamp}`;
+        const absoluteOutputDir = path.join(os.tmpdir(), "zkp-channel-verifier", outputDirName);
+        
+        // Ensure output directory exists
+        await fs.mkdir(absoluteOutputDir, { recursive: true });
+
+        const args = [
+          "l2-transfer",
+          "--channel-id",
+          options.channelId,
+          "--sender-key",
+          options.senderKey,
+          "--recipient",
+          options.recipient,
+          "--amount",
+          options.amount,
+          "--output",
+          absoluteOutputDir,
+          "--rpc-url",
+          options.rpcUrl,
+        ];
+
+        // Add network flag
+        if (options.network === "sepolia") {
+          args.push("--sepolia");
+        }
+
+        // Add init-tx if no previous state (first transfer)
+        if (!options.previousState && options.initTx) {
+          args.push("--init-tx", options.initTx);
+        }
+
+        // Add previous-state if provided (subsequent transfers)
+        if (options.previousState) {
+          args.push("--previous-state", options.previousState);
+        }
+
+        console.log(`Executing l2-transfer:`, synthesizerPath, args.join(" "));
+
+        const { stdout, stderr } = await execFileAsync(synthesizerPath, args, {
+          maxBuffer: 10 * 1024 * 1024, // 10MB buffer
+          cwd: BINARY_ROOT_DIR, // Set working directory to binaries root
+        });
+
+        if (stderr) {
+          console.error("l2-transfer stderr:", stderr);
+        }
+
+        console.log("l2-transfer stdout:", stdout);
+
+        // Read state_snapshot.json if it exists
+        const stateSnapshotPath = path.join(absoluteOutputDir, "state_snapshot.json");
+        let stateSnapshot: string | null = null;
+        try {
+          const stateSnapshotContent = await fs.readFile(stateSnapshotPath, "utf-8");
+          stateSnapshot = stateSnapshotContent;
+        } catch (e) {
+          console.warn("state_snapshot.json not found in output directory");
+        }
+
+        // Create ZIP file from output directory
+        let zipPath: string | null = null;
+        try {
+          const AdmZip = (await import("adm-zip")).default;
+          const zipFileName = `proof-output-${timestamp}.zip`;
+          zipPath = path.join(os.tmpdir(), "zkp-channel-verifier", zipFileName);
+          
+          // Ensure ZIP directory exists
+          await fs.mkdir(path.dirname(zipPath), { recursive: true });
+
+          const zip = new AdmZip();
+          
+          // Read all files from output directory and add to ZIP
+          const files = await fs.readdir(absoluteOutputDir, { recursive: true });
+          for (const file of files) {
+            const filePath = path.join(absoluteOutputDir, file);
+            const stat = await fs.stat(filePath);
+            if (stat.isFile()) {
+              const fileContent = await fs.readFile(filePath);
+              zip.addFile(file, fileContent);
+            }
+          }
+
+          // Write ZIP file
+          zip.writeZip(zipPath);
+          console.log(`ZIP file created: ${zipPath}`);
+        } catch (zipError: any) {
+          console.error("Failed to create ZIP file:", zipError);
+          // Continue even if ZIP creation fails
+        }
+
+        return {
+          success: true,
+          output: stdout,
+          stderr: stderr || "",
+          outputDir: absoluteOutputDir,
+          zipPath,
+          stateSnapshot,
+        };
+      } catch (error: any) {
+        console.error("l2-transfer error:", error);
+        return {
+          success: false,
+          error: error.message || "Failed to execute l2-transfer",
           stderr: error.stderr || "",
           stdout: error.stdout || "",
         };

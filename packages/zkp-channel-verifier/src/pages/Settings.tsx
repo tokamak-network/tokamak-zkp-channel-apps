@@ -243,29 +243,6 @@ const Settings: React.FC = () => {
             </div>
           </div>
 
-          {/* Contract Configuration */}
-          <div className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border border-[#4fc3f7] shadow-lg shadow-[#4fc3f7]/20" style={{ padding: "32px", marginBottom: "24px" }}>
-            <h2 className="text-lg font-bold text-white" style={{ marginBottom: "24px" }}>
-              Contract Address
-            </h2>
-
-            <div>
-              <label className="block font-medium text-gray-300" style={{ fontSize: "16px", marginBottom: "12px" }}>
-                RollupBridgeCore Address
-              </label>
-              <input
-                type="text"
-                value={settings.contractAddress}
-                onChange={(e) => setSettings({ ...settings, contractAddress: e.target.value })}
-                placeholder="0x..."
-                className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all font-mono"
-                style={{ padding: "14px 16px", fontSize: "14px" }}
-              />
-              <p className="text-gray-400" style={{ fontSize: "14px", marginTop: "8px" }}>
-                The deployed RollupBridgeCore contract address on your network
-              </p>
-            </div>
-          </div>
 
           {/* Action Buttons */}
           <div className="flex items-center justify-between">

@@ -1,12 +1,31 @@
 import { createPublicClient, http, Address, defineChain } from "viem";
 import { mainnet, sepolia } from "viem/chains";
 import { storage } from "@/utils/storage";
+import { ROLLUP_BRIDGE_CORE_ADDRESS } from "@/constants/contracts";
 
 // 토큰 이름 매핑 (실제 토큰 주소 → 심볼)
 export const TOKEN_SYMBOLS: Record<string, string> = {
   "0x0000000000000000000000000000000000000000": "ETH",
   // 실제 WTON, USDT 등의 주소를 추가해야 함
 };
+
+// ERC20 ABI (symbol, decimals)
+export const ERC20_ABI = [
+  {
+    inputs: [],
+    name: "symbol",
+    outputs: [{ name: "", type: "string" }],
+    stateMutability: "view",
+    type: "function",
+  },
+  {
+    inputs: [],
+    name: "decimals",
+    outputs: [{ name: "", type: "uint8" }],
+    stateMutability: "view",
+    type: "function",
+  },
+] as const;
 
 // RollupBridgeCore ABI (필요한 getter 함수들만 포함)
 export const ROLLUP_BRIDGE_CORE_ABI = [
@@ -353,13 +372,6 @@ function createClient() {
 }
 
 /**
- * 현재 설정된 컨트랙트 주소를 가져옵니다
- */
-function getContractAddress(): Address {
-  return storage.getContractAddress() as Address;
-}
-
-/**
  * 채널의 참여자 목록을 가져옵니다
  */
 export async function getChannelParticipants(
@@ -367,10 +379,9 @@ export async function getChannelParticipants(
 ): Promise<Address[]> {
   try {
     const client = createClient();
-    const contractAddress = getContractAddress();
 
     const participants = await client.readContract({
-      address: contractAddress,
+      address: ROLLUP_BRIDGE_CORE_ADDRESS as Address,
       abi: ROLLUP_BRIDGE_CORE_ABI,
       functionName: "getChannelParticipants",
       args: [channelId],
@@ -390,10 +401,9 @@ export async function getChannelTargetContract(
 ): Promise<Address | null> {
   try {
     const client = createClient();
-    const contractAddress = getContractAddress();
 
     const targetContract = await client.readContract({
-      address: contractAddress,
+      address: ROLLUP_BRIDGE_CORE_ADDRESS as Address,
       abi: ROLLUP_BRIDGE_CORE_ABI,
       functionName: "getChannelTargetContract",
       args: [channelId],
@@ -411,10 +421,9 @@ export async function getChannelTargetContract(
 export async function getChannelInfo(channelId: bigint) {
   try {
     const client = createClient();
-    const contractAddress = getContractAddress();
 
     const info = await client.readContract({
-      address: contractAddress,
+      address: ROLLUP_BRIDGE_CORE_ADDRESS as Address,
       abi: ROLLUP_BRIDGE_CORE_ABI,
       functionName: "getChannelInfo",
       args: [channelId],
@@ -461,10 +470,9 @@ export async function getL2MptKey(
 ): Promise<string | null> {
   try {
     const client = createClient();
-    const contractAddress = getContractAddress();
 
     const mptKey = await client.readContract({
-      address: contractAddress,
+      address: ROLLUP_BRIDGE_CORE_ADDRESS as Address,
       abi: ROLLUP_BRIDGE_CORE_ABI,
       functionName: "getL2MptKey",
       args: [channelId, participant],
@@ -475,6 +483,38 @@ export async function getL2MptKey(
     return mptKeyHex;
   } catch (error) {
     console.error("Failed to fetch L2 MPT key:", error);
+    return null;
+  }
+}
+
+/**
+ * ERC20 토큰의 symbol과 decimals를 가져옵니다
+ */
+export async function getERC20TokenInfo(
+  tokenAddress: Address
+): Promise<{ symbol: string; decimals: number } | null> {
+  try {
+    const client = createClient();
+
+    const [symbol, decimals] = await Promise.all([
+      client.readContract({
+        address: tokenAddress,
+        abi: ERC20_ABI,
+        functionName: "symbol",
+      }),
+      client.readContract({
+        address: tokenAddress,
+        abi: ERC20_ABI,
+        functionName: "decimals",
+      }),
+    ]);
+
+    return {
+      symbol: symbol as string,
+      decimals: Number(decimals),
+    };
+  } catch (error) {
+    console.error("Failed to fetch ERC20 token info:", error);
     return null;
   }
 }

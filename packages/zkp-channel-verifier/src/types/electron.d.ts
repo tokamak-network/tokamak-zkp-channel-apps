@@ -3,6 +3,11 @@ export interface ElectronAPI {
     filePath: string;
     content: string;
   } | null>;
+  readFile: (filePath: string) => Promise<{
+    success: boolean;
+    content?: string;
+    error?: string;
+  }>;
   saveFile: (
     fileName: string,
     content: string | Buffer // Accept base64 string or Buffer
@@ -22,4 +27,3 @@ declare global {
     };
   }
 }
-

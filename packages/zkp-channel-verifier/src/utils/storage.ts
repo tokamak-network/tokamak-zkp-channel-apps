@@ -3,19 +3,16 @@
 
 import {
   SEPOLIA_RPC_URL,
-  ROLLUP_BRIDGE_CORE_ADDRESS,
   NETWORK_CONFIG,
 } from "../constants/contracts";
 
 export interface AppSettings {
   rpcUrl: string;
-  contractAddress: string;
   chainId: number;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
   rpcUrl: SEPOLIA_RPC_URL,
-  contractAddress: ROLLUP_BRIDGE_CORE_ADDRESS,
   chainId: NETWORK_CONFIG.SEPOLIA.CHAIN_ID,
 };
 
@@ -55,14 +52,6 @@ export const storage = {
 
   setRpcUrl(url: string): void {
     this.saveSettings({ rpcUrl: url });
-  },
-
-  getContractAddress(): string {
-    return this.getSettings().contractAddress;
-  },
-
-  setContractAddress(address: string): void {
-    this.saveSettings({ contractAddress: address });
   },
 
   getChainId(): number {

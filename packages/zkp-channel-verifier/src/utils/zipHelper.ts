@@ -51,3 +51,27 @@ export function readStateSnapshot(extractedDir: string): any | null {
     return null;
   }
 }
+
+/**
+ * Read channel-info.json from an extracted directory
+ * @param extractedDir - Path to the extracted directory
+ * @returns Parsed channel info object, or null if not found
+ */
+export function readChannelInfo(extractedDir: string): { initializedTxHash?: string } | null {
+  const channelInfoPath = join(extractedDir, 'channel-info.json');
+
+  if (!existsSync(channelInfoPath)) {
+    console.warn('[zipHelper] channel-info.json not found in:', extractedDir);
+    return null;
+  }
+
+  try {
+    const content = readFileSync(channelInfoPath, 'utf-8');
+    const channelInfo = JSON.parse(content);
+    console.log('[zipHelper] Channel info loaded:', channelInfo.initializedTxHash);
+    return channelInfo;
+  } catch (error) {
+    console.error('[zipHelper] Failed to read channel-info.json:', error);
+    return null;
+  }
+}

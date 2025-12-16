@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from "electron";
 
 contextBridge.exposeInMainWorld("electronAPI", {
   uploadFile: () => ipcRenderer.invoke("upload-file"),
+  readFile: (filePath: string) => ipcRenderer.invoke("read-file", filePath),
   saveFile: (fileName: string, content: string | Buffer) =>
     ipcRenderer.invoke("save-file", fileName, content),
   executeBinary: (command: string[]) =>
@@ -16,6 +17,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
 // Expose generic IPC invoke for other handlers
 contextBridge.exposeInMainWorld("electron", {
-  invoke: (channel: string, ...args: any[]) => ipcRenderer.invoke(channel, ...args),
+  invoke: (channel: string, ...args: any[]) =>
+    ipcRenderer.invoke(channel, ...args),
 });
-
