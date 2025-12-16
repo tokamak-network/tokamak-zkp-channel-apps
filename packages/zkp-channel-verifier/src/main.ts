@@ -642,7 +642,102 @@ function setupIpcHandlers() {
           console.warn("state_snapshot.json not found in output directory");
         }
 
-        // Create ZIP file from output directory
+        // Copy results to binaries/resource/synthesizer/output
+        const { RESOURCES } = await import("./utils/binaryConfig");
+        const synthesizerOutputDir = RESOURCES.synthesizer;
+        
+        // Ensure synthesizer output directory exists
+        await fs.mkdir(synthesizerOutputDir, { recursive: true });
+        
+        // Clear existing files in synthesizer output directory
+        try {
+          const existingFiles = await fs.readdir(synthesizerOutputDir);
+          for (const file of existingFiles) {
+            const filePath = path.join(synthesizerOutputDir, file);
+            const stat = await fs.stat(filePath);
+            if (stat.isDirectory()) {
+              await fs.rm(filePath, { recursive: true, force: true });
+            } else {
+              await fs.unlink(filePath);
+            }
+          }
+        } catch (e) {
+          // Directory might be empty, continue
+        }
+
+        // Copy all files from absoluteOutputDir to synthesizerOutputDir
+        const copyRecursive = async (src: string, dest: string) => {
+          const entries = await fs.readdir(src, { withFileTypes: true });
+          await fs.mkdir(dest, { recursive: true });
+          
+          for (const entry of entries) {
+            const srcPath = path.join(src, entry.name);
+            const destPath = path.join(dest, entry.name);
+            
+            if (entry.isDirectory()) {
+              await copyRecursive(srcPath, destPath);
+            } else {
+              await fs.copyFile(srcPath, destPath);
+            }
+          }
+        };
+        
+        await copyRecursive(absoluteOutputDir, synthesizerOutputDir);
+        console.log(`Copied results to synthesizer output: ${synthesizerOutputDir}`);
+
+        // Execute prove command
+        let proveSuccess = false;
+        let proveOutput = "";
+        let proveStderr = "";
+        try {
+          const proveBinaryPath = getBinaryPath("prove");
+          const { RESOURCES } = await import("./utils/binaryConfig");
+          
+          // Check if prove binary exists
+          try {
+            await fs.access(proveBinaryPath);
+          } catch (accessError) {
+            console.warn(`prove binary not found at ${proveBinaryPath}, skipping proof generation`);
+            proveStderr = `prove binary not found. Please ensure prove is available at ${proveBinaryPath}`;
+            // Continue without proof generation - adapter results are still available
+          }
+          
+          if (!proveStderr) {
+            // Command format: ./bin/prove <qap-path> <synthesizer-output-path> <setup-path> <output-path>
+            const proveArgs = [
+              RESOURCES.qap,              // qap-path
+              synthesizerOutputDir,       // synthesizer-output-path
+              RESOURCES.setup,            // setup-path
+              synthesizerOutputDir,       // output-path (proof files will be written here)
+            ];
+            
+            console.log(`Executing prove:`, proveBinaryPath, proveArgs.join(" "));
+            
+            const { stdout: proveStdout, stderr: proveStderrOutput } = await execFileAsync(
+              proveBinaryPath,
+              proveArgs,
+              {
+                maxBuffer: 10 * 1024 * 1024, // 10MB buffer
+                cwd: BINARY_ROOT_DIR,
+              }
+            );
+            
+            proveOutput = proveStdout;
+            proveStderr = proveStderrOutput || "";
+            proveSuccess = true;
+            
+            console.log("prove stdout:", proveOutput);
+            if (proveStderr) {
+              console.error("prove stderr:", proveStderr);
+            }
+          }
+        } catch (proveError: any) {
+          console.error("prove error:", proveError);
+          proveOutput = proveError.stdout || "";
+          proveStderr = proveError.stderr || proveError.message || proveStderr;
+        }
+
+        // Create ZIP file from synthesizer output directory (includes proof files)
         let zipPath: string | null = null;
         try {
           const AdmZip = (await import("adm-zip")).default;
@@ -654,10 +749,10 @@ function setupIpcHandlers() {
 
           const zip = new AdmZip();
           
-          // Read all files from output directory and add to ZIP
-          const files = await fs.readdir(absoluteOutputDir, { recursive: true });
+          // Read all files from synthesizer output directory and add to ZIP
+          const files = await fs.readdir(synthesizerOutputDir, { recursive: true });
           for (const file of files) {
-            const filePath = path.join(absoluteOutputDir, file);
+            const filePath = path.join(synthesizerOutputDir, file);
             const stat = await fs.stat(filePath);
             if (stat.isFile()) {
               const fileContent = await fs.readFile(filePath);
@@ -678,8 +773,12 @@ function setupIpcHandlers() {
           output: stdout,
           stderr: stderr || "",
           outputDir: absoluteOutputDir,
+          synthesizerOutputDir,
           zipPath,
           stateSnapshot,
+          proveSuccess,
+          proveOutput,
+          proveStderr,
         };
       } catch (error: any) {
         console.error("l2-transfer error:", error);

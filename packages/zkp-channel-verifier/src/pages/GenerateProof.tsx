@@ -593,8 +593,9 @@ const GenerateProof: React.FC = () => {
       if (result.success) {
         setLogs((prev) => [
           ...prev,
-          "✅ L2 transfer proof generation completed!",
+          "✅ L2 transfer adapter execution completed!",
           `📁 Output directory: ${result.outputDir}`,
+          `📂 Synthesizer output: ${result.synthesizerOutputDir || "N/A"}`,
           ...result.output.split("\n").filter((line: string) => line.trim()),
         ]);
 
@@ -604,12 +605,37 @@ const GenerateProof: React.FC = () => {
           setLogs((prev) => [...prev, "✅ New state snapshot generated"]);
         }
 
+        // Add prove execution results
+        if (result.proveSuccess !== undefined) {
+          setLogs((prev) => [
+            ...prev,
+            result.proveSuccess
+              ? "✅ Proof generation completed successfully!"
+              : "⚠️ Proof generation completed with warnings",
+            ...(result.proveOutput
+              ? result.proveOutput
+                  .split("\n")
+                  .filter((line: string) => line.trim())
+              : []),
+          ]);
+
+          if (result.proveStderr) {
+            setLogs((prev) => [
+              ...prev,
+              ...result.proveStderr
+                .split("\n")
+                .filter((line: string) => line.trim())
+                .map((line: string) => `⚠️ ${line}`),
+            ]);
+          }
+        }
+
         // Store ZIP path if available
         if (result.zipPath) {
           setOutputZipPath(result.zipPath);
           setLogs((prev) => [
             ...prev,
-            `📦 ZIP file created: ${result.zipPath}`,
+            `📦 ZIP file created with proof: ${result.zipPath}`,
           ]);
         }
 
