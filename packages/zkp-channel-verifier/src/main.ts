@@ -147,9 +147,9 @@ function setupIpcHandlers() {
   console.log("Setting up IPC handlers...");
 
   // File upload handler
-  ipcMain.handle("upload-file", async () => {
+  ipcMain.handle("upload-file", async (event, options?: { allowDirectory?: boolean }) => {
     const { filePaths } = await dialog.showOpenDialog({
-      properties: ["openFile"],
+      properties: options?.allowDirectory ? ["openFile", "openDirectory"] : ["openFile"],
       filters: [
         { name: "ZIP Files", extensions: ["zip"] },
         { name: "JSON Files", extensions: ["json"] },
@@ -159,6 +159,9 @@ function setupIpcHandlers() {
     if (filePaths.length > 0) {
       const filePath = filePaths[0];
       const isZip = filePath.toLowerCase().endsWith(".zip");
+      const fs = await import("fs/promises");
+      const stat = await fs.stat(filePath);
+      const isDirectory = stat.isDirectory();
 
       if (isZip) {
         // Extract ZIP file to temporary directory
@@ -184,6 +187,13 @@ function setupIpcHandlers() {
             ? JSON.stringify(channelInfo)
             : undefined,
         };
+      } else if (isDirectory) {
+        // For directories, return the path directly
+        return {
+          filePath,
+          isZip: false,
+          isDirectory: true,
+        };
       } else {
         // For JSON files, return content as base64
         const content = fs.readFileSync(filePath);
@@ -191,6 +201,7 @@ function setupIpcHandlers() {
           filePath,
           content: content.toString("base64"),
           isZip: false,
+          isDirectory: false,
         };
       }
     }
@@ -675,6 +686,69 @@ function setupIpcHandlers() {
         return {
           success: false,
           error: error.message || "Failed to execute l2-transfer",
+          stderr: error.stderr || "",
+          stdout: error.stdout || "",
+        };
+      }
+    }
+  );
+
+  // Verify Proof using tokamak-cli
+  ipcMain.handle(
+    "verify-proof",
+    async (
+      event,
+      options: {
+        proofPath: string; // Path to the uploaded proof file/directory
+      }
+    ) => {
+      const { execFile } = await import("child_process");
+      const { promisify } = await import("util");
+      const execFileAsync = promisify(execFile);
+      const { getBinaryPath, BINARY_ROOT_DIR } = await import("./utils/binaryConfig");
+      const path = await import("path");
+      const fs = await import("fs/promises");
+
+      try {
+        const tokamakCliPath = getBinaryPath("tokamakCli");
+        
+        // Verify proof path exists
+        try {
+          await fs.access(options.proofPath);
+        } catch (e) {
+          throw new Error(`Proof path does not exist: ${options.proofPath}`);
+        }
+
+        // Execute tokamak-cli --verify
+        const args = ["--verify", options.proofPath];
+
+        console.log(`Executing verify-proof:`, tokamakCliPath, args.join(" "));
+
+        const { stdout, stderr } = await execFileAsync(tokamakCliPath, args, {
+          maxBuffer: 10 * 1024 * 1024, // 10MB buffer
+          cwd: BINARY_ROOT_DIR, // Set working directory to binaries root
+        });
+
+        if (stderr) {
+          console.error("verify-proof stderr:", stderr);
+        }
+
+        console.log("verify-proof stdout:", stdout);
+
+        // Check if verification was successful
+        // tokamak-cli typically returns exit code 0 on success
+        const success = stdout.includes("success") || stdout.includes("verified") || !stderr.includes("error");
+
+        return {
+          success,
+          output: stdout,
+          stderr: stderr || "",
+        };
+      } catch (error: any) {
+        console.error("verify-proof error:", error);
+        return {
+          success: false,
+          error: error.message || "Failed to verify proof",
           stderr: error.stderr || "",
           stdout: error.stdout || "",
         };

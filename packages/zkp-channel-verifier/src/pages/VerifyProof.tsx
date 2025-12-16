@@ -27,54 +27,68 @@ const VerifyProof: React.FC = () => {
 
   const handleFileUpload = async () => {
     try {
-      const result = await window.electronAPI.uploadFile();
+      const result = await window.electron.invoke("upload-file", { allowDirectory: true });
       if (result) {
         setUploadedFile({
           name: result.filePath.split("/").pop() || "unknown",
           path: result.filePath,
-          content: result.content,
+          content: result.content || "",
         });
         setVerificationResult(null);
         setLogs([]);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("File upload failed:", error);
-      setLogs((prev) => [...prev, `❌ File upload failed: ${error.message}`]);
+      setLogs((prev) => [...prev, `❌ File upload failed: ${error.message || error}`]);
     }
   };
 
   const handleVerify = async () => {
     if (!uploadedFile) {
-      alert("Please upload a file first.");
+      alert("Please upload a proof file first.");
       return;
     }
 
     setIsVerifying(true);
     setVerificationResult("pending");
-    setLogs(["🔍 Starting verification...", `📁 File: ${uploadedFile.name}`]);
+    setLogs([
+      "🔍 Starting verification...",
+      `📁 Proof file: ${uploadedFile.name}`,
+      `📂 Path: ${uploadedFile.path}`,
+    ]);
 
     try {
-      // Setup stdout/stderr listeners
-      window.electronAPI.onBinaryStdout((data: string) => {
-        setLogs((prev) => [...prev, `> ${data.trim()}`]);
+      // Execute verify-proof using tokamak-cli
+      const result = await window.electron.invoke("verify-proof", {
+        proofPath: uploadedFile.path,
       });
 
-      window.electronAPI.onBinaryStderr((data: string) => {
-        setLogs((prev) => [...prev, `⚠️ ${data.trim()}`]);
-      });
+      // Add output to logs
+      if (result.output) {
+        const outputLines = result.output.split("\n").filter((line: string) => line.trim());
+        setLogs((prev) => [...prev, ...outputLines.map((line: string) => `> ${line}`)]);
+      }
 
-      // Execute verify binary (placeholder command)
-      // 실제로는 src/binaries/5_run-verify.sh 등을 실행
-      const result = await window.electronAPI.executeBinary([
-        "bash",
-        "-c",
-        `echo "Verifying proof..." && sleep 2 && echo "Verification complete" && exit 0`,
+      if (result.stderr) {
+        const stderrLines = result.stderr.split("\n").filter((line: string) => line.trim());
+        setLogs((prev) => [...prev, ...stderrLines.map((line: string) => `⚠️ ${line}`)]);
+      }
+
+      if (result.success) {
+        setLogs((prev) => [...prev, "✅ Verification completed successfully."]);
+        setVerificationResult("success");
+      } else {
+        setLogs((prev) => [
+          ...prev,
+          `❌ Verification failed: ${result.error || "Unknown error"}`,
+        ]);
+        setVerificationResult("failure");
+      }
+    } catch (error: any) {
+      setLogs((prev) => [
+        ...prev,
+        `❌ Verification failed: ${error.message || error}`,
       ]);
-
-      setLogs((prev) => [...prev, "✅ Verification completed successfully."]);
-      setVerificationResult("success");
-    } catch (error) {
-      setLogs((prev) => [...prev, `❌ Verification failed: ${error.message}`]);
       setVerificationResult("failure");
     } finally {
       setIsVerifying(false);
@@ -208,7 +222,7 @@ const VerifyProof: React.FC = () => {
             >
               <FileText className="w-6 h-6" />
               <span className="font-semibold">
-                Upload Proof & State ZIP File
+                Upload Proof File
               </span>
             </button>
 
@@ -362,13 +376,13 @@ const VerifyProof: React.FC = () => {
               <li className="flex items-start gap-2">
                 <span className="text-[#4fc3f7] mt-1">•</span>
                 <span>
-                  Upload a ZIP file containing your proof and EVM state files
+                  Upload a proof file (directory or ZIP file)
                 </span>
               </li>
               <li className="flex items-start gap-2">
                 <span className="text-[#4fc3f7] mt-1">•</span>
                 <span>
-                  Click "Verify Proof" to start the verification process
+                  Click "Verify Proof" to start the verification process using tokamak-cli
                 </span>
               </li>
               <li className="flex items-start gap-2">
