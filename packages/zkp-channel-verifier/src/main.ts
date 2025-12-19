@@ -914,8 +914,9 @@ function setupIpcHandlers() {
         }
 
         // Extract ZIP file and copy folders to resource directory
+        // For verify-proof, the ZIP structure is: extractedDir/prove/ and extractedDir/synthesizer/
+        // We don't need findContentDir here since the folders are directly in extractedDir
         const extractedDir = await extractZip(options.proofPath);
-        const contentDir = findContentDir(extractedDir); // Handle single folder case
         
         // Helper function to copy directory recursively
         const copyRecursive = async (src: string, dest: string) => {
@@ -952,8 +953,8 @@ function setupIpcHandlers() {
           }
         };
         
-        // Copy synthesizer folder if it exists (from content directory)
-        const extractedSynthesizerPath = path.join(contentDir, "synthesizer");
+        // Copy synthesizer folder if it exists (from extracted directory)
+        const extractedSynthesizerPath = path.join(extractedDir, "synthesizer");
         try {
           await fs.access(extractedSynthesizerPath);
           await clearDirectory(RESOURCES.synthesizer);
@@ -963,8 +964,8 @@ function setupIpcHandlers() {
           console.warn("synthesizer folder not found in ZIP, skipping");
         }
         
-        // Copy prove folder if it exists (from content directory)
-        const extractedProvePath = path.join(contentDir, "prove");
+        // Copy prove folder if it exists (from extracted directory)
+        const extractedProvePath = path.join(extractedDir, "prove");
         try {
           await fs.access(extractedProvePath);
           await clearDirectory(RESOURCES.prove);
