@@ -173,42 +173,56 @@ function setupIpcHandlers() {
         console.log("[main] Extracted dir:", extractedDir);
         console.log("[main] Content dir:", contentDir);
 
+        // Read files directly from contentDir (already found)
+        const fs = await import("fs/promises");
+        const path = await import("path");
+        const { readFileSync, existsSync, readdirSync } = await import("fs");
+        
         // Try to read state_snapshot.json if it exists
-        const stateSnapshot = readStateSnapshot(extractedDir);
-        console.log("[main] State snapshot:", stateSnapshot ? "found" : "not found");
-
-        // Try to read transaction-info.json if it exists
-        const transactionInfo = readTransactionInfo(extractedDir);
-        console.log("[main] Transaction info:", transactionInfo ? "found" : "not found");
-        
-        let finalTransactionInfo = transactionInfo;
-        
-        if (!transactionInfo) {
-          console.log("[main] Transaction info is null. Checking contentDir directly...");
-          // Try to read directly from contentDir as fallback
-          const fs = await import("fs/promises");
-          const path = await import("path");
-          const transactionInfoPath = path.join(contentDir, "transaction-info.json");
+        const stateSnapshotPath = path.join(contentDir, "state_snapshot.json");
+        let stateSnapshot = null;
+        if (existsSync(stateSnapshotPath)) {
           try {
-            const exists = await fs.access(transactionInfoPath).then(() => true).catch(() => false);
-            console.log("[main] transaction-info.json exists at:", transactionInfoPath, exists);
-            if (exists) {
-              const content = await fs.readFile(transactionInfoPath, "utf-8");
-              console.log("[main] Direct read content:", content);
-              // Try to parse and use it
-              try {
-                const parsed = JSON.parse(content);
-                console.log("[main] Parsed transaction info:", parsed);
-                finalTransactionInfo = parsed;
-              } catch (parseError) {
-                console.error("[main] Failed to parse transaction-info.json:", parseError);
-              }
-            }
+            const content = readFileSync(stateSnapshotPath, "utf-8");
+            stateSnapshot = JSON.parse(content);
+            console.log("[main] State snapshot found, root:", stateSnapshot.stateRoot?.substring(0, 16) + "...");
           } catch (e) {
-            console.error("[main] Error checking transaction-info.json directly:", e);
+            console.error("[main] Failed to read state_snapshot.json:", e);
           }
         } else {
-          console.log("[main] Transaction info content:", JSON.stringify(transactionInfo));
+          console.log("[main] State snapshot: not found");
+        }
+
+        // Try to read transaction-info.json (or transaction-info*.json) if it exists
+        let finalTransactionInfo = null;
+        const transactionInfoPath = path.join(contentDir, "transaction-info.json");
+        
+        if (existsSync(transactionInfoPath)) {
+          try {
+            const content = readFileSync(transactionInfoPath, "utf-8");
+            finalTransactionInfo = JSON.parse(content);
+            console.log("[main] Transaction info found:", Object.keys(finalTransactionInfo));
+          } catch (e) {
+            console.error("[main] Failed to read transaction-info.json:", e);
+          }
+        } else {
+          // Try to find transaction-info*.json files
+          try {
+            const files = readdirSync(contentDir);
+            const transactionInfoFile = files.find((f) => 
+              f.startsWith("transaction-info") && f.endsWith(".json")
+            );
+            if (transactionInfoFile) {
+              const filePath = path.join(contentDir, transactionInfoFile);
+              const content = readFileSync(filePath, "utf-8");
+              finalTransactionInfo = JSON.parse(content);
+              console.log("[main] Transaction info found in:", transactionInfoFile);
+            } else {
+              console.log("[main] Transaction info: not found");
+            }
+          } catch (e) {
+            console.error("[main] Error searching for transaction-info files:", e);
+          }
         }
 
         return {
