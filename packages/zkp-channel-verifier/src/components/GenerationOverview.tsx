@@ -1,5 +1,5 @@
 import React from "react";
-import { Zap, RefreshCw, FileText, Users, Coins } from "lucide-react";
+import { Zap, FileText, Users, Coins } from "lucide-react";
 
 interface GenerationOverviewProps {
   channelId: string;
@@ -8,7 +8,7 @@ interface GenerationOverviewProps {
   channelParticipants: { address: string; label: string }[];
   supportedTokens: string[];
   isLoadingChannelData: boolean;
-  onRefresh: () => void;
+  transactionInfoLoaded: boolean;
 }
 
 const GenerationOverview: React.FC<GenerationOverviewProps> = ({
@@ -18,7 +18,7 @@ const GenerationOverview: React.FC<GenerationOverviewProps> = ({
   channelParticipants,
   supportedTokens,
   isLoadingChannelData,
-  onRefresh,
+  transactionInfoLoaded,
 }) => {
   return (
     <div
@@ -26,7 +26,7 @@ const GenerationOverview: React.FC<GenerationOverviewProps> = ({
       style={{ padding: "24px", marginBottom: "48px" }}
     >
       <div
-        className="flex items-center justify-between"
+        className="flex items-center"
         style={{ marginBottom: "16px" }}
       >
         <div className="flex items-center" style={{ gap: "12px" }}>
@@ -42,17 +42,6 @@ const GenerationOverview: React.FC<GenerationOverviewProps> = ({
             </p>
           </div>
         </div>
-        <button
-          onClick={onRefresh}
-          disabled={isLoadingChannelData}
-          className="flex items-center bg-[#4fc3f7] hover:bg-[#029bee] text-white rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-          style={{ padding: "8px 16px", gap: "8px", fontSize: "14px" }}
-        >
-          <RefreshCw
-            className={`w-4 h-4 ${isLoadingChannelData ? "animate-spin" : ""}`}
-          />
-          Refresh Data
-        </button>
       </div>
 
       {/* Channel ID Input */}
@@ -67,16 +56,19 @@ const GenerationOverview: React.FC<GenerationOverviewProps> = ({
           type="text"
           value={channelId}
           onChange={(e) => onChannelIdChange(e.target.value)}
-          placeholder="Enter channel ID (e.g., 8)"
-          className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all"
+          placeholder="Upload state file to load channel ID"
+          readOnly={true}
+          disabled={true}
+          className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all opacity-70 cursor-not-allowed"
           style={{ padding: "10px 14px", fontSize: "14px" }}
         />
         <p
           className="text-gray-400"
           style={{ fontSize: "12px", marginTop: "4px" }}
         >
-          Enter the on-chain channel ID to load participants and supported
-          tokens
+          {transactionInfoLoaded
+            ? "Loaded from transaction-info.json"
+            : "Please upload a state file (ZIP) containing transaction-info.json"}
         </p>
       </div>
 

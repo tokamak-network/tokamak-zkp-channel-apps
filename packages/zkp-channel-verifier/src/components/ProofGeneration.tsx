@@ -1,18 +1,14 @@
 import React from "react";
-import { Plus, FileText, Check, Info, RefreshCw } from "lucide-react";
+import { Plus, Check, RefreshCw } from "lucide-react";
 
 interface ProofGenerationProps {
   stateFile: { name: string; path: string } | null;
-  onStateUpload: () => void;
   l2PrivateKey: string;
   onL2PrivateKeyChange: (key: string) => void;
   l2Address: string;
   isDerivingAddress: boolean;
   recipientAddress: string;
   onRecipientAddressChange: (address: string) => void;
-  inputMode: "select" | "manual";
-  onInputModeChange: (mode: "select" | "manual") => void;
-  channelParticipants: { address: string; label: string }[];
   supportedTokens: string[];
   selectedToken: string;
   onSelectedTokenChange: (token: string) => void;
@@ -20,21 +16,17 @@ interface ProofGenerationProps {
   onAmountChange: (amount: string) => void;
   isGenerating: boolean;
   onGenerate: () => void;
-  tokenInfo: { symbol: string; decimals: number } | null;
+  transactionInfoLoaded: boolean;
 }
 
 const ProofGeneration: React.FC<ProofGenerationProps> = ({
   stateFile,
-  onStateUpload,
   l2PrivateKey,
   onL2PrivateKeyChange,
   l2Address,
   isDerivingAddress,
   recipientAddress,
   onRecipientAddressChange,
-  inputMode,
-  onInputModeChange,
-  channelParticipants,
   supportedTokens,
   selectedToken,
   onSelectedTokenChange,
@@ -42,7 +34,7 @@ const ProofGeneration: React.FC<ProofGenerationProps> = ({
   onAmountChange,
   isGenerating,
   onGenerate,
-  tokenInfo,
+  transactionInfoLoaded,
 }) => {
   return (
     <div
@@ -59,61 +51,12 @@ const ProofGeneration: React.FC<ProofGenerationProps> = ({
         <div>
           <h2 className="text-lg font-bold text-white">Proof Generation</h2>
           <p className="text-sm text-gray-400">
-            Upload state file and enter transaction details
+            Transaction details loaded from state file
           </p>
         </div>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-        {/* State File Upload */}
-        <div>
-          <label
-            className="block font-medium text-gray-300"
-            style={{ fontSize: "16px", marginBottom: "12px" }}
-          >
-            State File
-          </label>
-          <button
-            onClick={onStateUpload}
-            className="w-full border-2 border-dashed border-[#4fc3f7]/30 hover:border-[#4fc3f7] bg-[#0a1930]/50 text-gray-300 hover:text-[#4fc3f7] transition-all flex items-center justify-center"
-            style={{ padding: "24px", gap: "12px" }}
-          >
-            <FileText className="w-6 h-6" />
-            <span className="font-semibold" style={{ fontSize: "16px" }}>
-              {stateFile ? "Change State File" : "Upload State File"}
-            </span>
-          </button>
-          {stateFile && (
-            <div
-              className="bg-[#0a1930]/50 border border-[#4fc3f7]/30"
-              style={{ marginTop: "12px", padding: "16px" }}
-            >
-              <div className="flex items-center" style={{ gap: "12px" }}>
-                <div
-                  className="bg-green-500 rounded"
-                  style={{ padding: "8px" }}
-                >
-                  <Check className="w-4 h-4 text-white" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p
-                    className="text-white font-medium truncate"
-                    style={{ fontSize: "15px", marginBottom: "4px" }}
-                  >
-                    {stateFile.name}
-                  </p>
-                  <p
-                    className="text-gray-400 font-mono truncate"
-                    style={{ fontSize: "13px" }}
-                  >
-                    {stateFile.path}
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
         {/* Sender L2 Private Key (From) */}
         <div>
           <label
@@ -126,15 +69,19 @@ const ProofGeneration: React.FC<ProofGenerationProps> = ({
             type="text"
             value={l2PrivateKey}
             onChange={(e) => onL2PrivateKeyChange(e.target.value)}
-            placeholder="0x..."
-            className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all font-mono"
+            placeholder="Upload state file to load private key"
+            readOnly={true}
+            disabled={true}
+            className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all font-mono opacity-70 cursor-not-allowed"
             style={{ padding: "14px 16px", fontSize: "15px" }}
           />
           <p
             className="text-gray-400"
             style={{ fontSize: "12px", marginTop: "8px" }}
           >
-            Enter your L2 private key to derive the sender address.
+            {transactionInfoLoaded
+              ? "Loaded from transaction-info.json"
+              : "Please upload a state file (ZIP) containing transaction-info.json"}
           </p>
 
           {/* Derived L2 Address Display */}
@@ -178,10 +125,20 @@ const ProofGeneration: React.FC<ProofGenerationProps> = ({
             type="text"
             value={recipientAddress}
             onChange={(e) => onRecipientAddressChange(e.target.value)}
-            placeholder="0x... (Enter L2 address)"
-            className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all font-mono"
+            placeholder="Upload state file to load recipient address"
+            readOnly={true}
+            disabled={true}
+            className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all font-mono opacity-70 cursor-not-allowed"
             style={{ padding: "14px 16px", fontSize: "15px" }}
           />
+          <p
+            className="text-gray-400"
+            style={{ fontSize: "12px", marginTop: "8px" }}
+          >
+            {transactionInfoLoaded
+              ? "Loaded from transaction-info.json"
+              : "Please upload a state file (ZIP) containing transaction-info.json"}
+          </p>
         </div>
 
         {/* Token Selection */}
@@ -227,12 +184,10 @@ const ProofGeneration: React.FC<ProofGenerationProps> = ({
               type="text"
               value={amount}
               onChange={(e) => onAmountChange(e.target.value)}
-              placeholder={
-                tokenInfo
-                  ? `e.g., 1 (1 ${tokenInfo.symbol})`
-                  : "e.g., 1 (1 token)"
-              }
-              className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all"
+              placeholder="Upload state file to load amount"
+              readOnly={true}
+              disabled={true}
+              className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all opacity-70 cursor-not-allowed"
               style={{
                 padding: "14px 16px",
                 paddingRight: "80px",
@@ -251,24 +206,14 @@ const ProofGeneration: React.FC<ProofGenerationProps> = ({
               </span>
             </div>
           </div>
-          <div
-            className="bg-yellow-500/10 border border-yellow-500/30 rounded"
-            style={{ padding: "12px", marginTop: "8px" }}
+          <p
+            className="text-gray-400"
+            style={{ fontSize: "12px", marginTop: "8px" }}
           >
-            <p
-              className="text-yellow-300 flex items-start"
-              style={{ fontSize: "14px", gap: "6px" }}
-            >
-              <Info
-                className="w-4 h-4"
-                style={{ marginTop: "2px", flexShrink: 0 }}
-              />
-              <span>
-                <strong>Enter amount as a natural number:</strong>
-                {tokenInfo ? ` e.g., 1 for 1 ${tokenInfo.symbol}` : " e.g., 1"}
-              </span>
-            </p>
-          </div>
+            {transactionInfoLoaded
+              ? "Loaded from transaction-info.json"
+              : "Please upload a state file (ZIP) containing transaction-info.json"}
+          </p>
         </div>
 
         {/* Generate Proof Button */}

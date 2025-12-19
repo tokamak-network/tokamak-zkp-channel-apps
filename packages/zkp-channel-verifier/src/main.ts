@@ -165,26 +165,65 @@ function setupIpcHandlers() {
 
       if (isZip) {
         // Extract ZIP file to temporary directory
-        const { extractZip, readStateSnapshot, readChannelInfo } = await import(
+        const { extractZip, readStateSnapshot, readTransactionInfo, findContentDir } = await import(
           "./utils/zipHelper"
         );
         const extractedDir = await extractZip(filePath);
+        const contentDir = findContentDir(extractedDir);
+        console.log("[main] Extracted dir:", extractedDir);
+        console.log("[main] Content dir:", contentDir);
 
         // Try to read state_snapshot.json if it exists
         const stateSnapshot = readStateSnapshot(extractedDir);
+        console.log("[main] State snapshot:", stateSnapshot ? "found" : "not found");
 
-        // Try to read channel-info.json if it exists
-        const channelInfo = readChannelInfo(extractedDir);
+        // Try to read transaction-info.json if it exists
+        const transactionInfo = readTransactionInfo(extractedDir);
+        console.log("[main] Transaction info:", transactionInfo ? "found" : "not found");
+        
+        let finalTransactionInfo = transactionInfo;
+        
+        if (!transactionInfo) {
+          console.log("[main] Transaction info is null. Checking contentDir directly...");
+          // Try to read directly from contentDir as fallback
+          const fs = await import("fs/promises");
+          const path = await import("path");
+          const transactionInfoPath = path.join(contentDir, "transaction-info.json");
+          try {
+            const exists = await fs.access(transactionInfoPath).then(() => true).catch(() => false);
+            console.log("[main] transaction-info.json exists at:", transactionInfoPath, exists);
+            if (exists) {
+              const content = await fs.readFile(transactionInfoPath, "utf-8");
+              console.log("[main] Direct read content:", content);
+              // Try to parse and use it
+              try {
+                const parsed = JSON.parse(content);
+                console.log("[main] Parsed transaction info:", parsed);
+                finalTransactionInfo = parsed;
+              } catch (parseError) {
+                console.error("[main] Failed to parse transaction-info.json:", parseError);
+              }
+            }
+          } catch (e) {
+            console.error("[main] Error checking transaction-info.json directly:", e);
+          }
+        } else {
+          console.log("[main] Transaction info content:", JSON.stringify(transactionInfo));
+        }
 
         return {
           filePath,
-          extractedDir,
+          extractedDir: contentDir, // Return content directory (handles single folder case)
           isZip: true,
           stateSnapshot: stateSnapshot
             ? JSON.stringify(stateSnapshot)
             : undefined,
-          channelInfo: channelInfo
-            ? JSON.stringify(channelInfo)
+          transactionInfo: finalTransactionInfo
+            ? JSON.stringify(finalTransactionInfo)
+            : undefined,
+          // Keep channelInfo for backward compatibility
+          channelInfo: finalTransactionInfo
+            ? JSON.stringify(finalTransactionInfo)
             : undefined,
         };
       } else if (isDirectory) {
@@ -517,6 +556,18 @@ function setupIpcHandlers() {
         // Add snapshot path if provided
         if (options.snapshotPath) {
           args.push("--snapshot", options.snapshotPath);
+          console.log(`[get-balances] Using snapshot file: ${options.snapshotPath}`);
+          
+          // Verify snapshot file exists
+          const fs = await import("fs/promises");
+          try {
+            await fs.access(options.snapshotPath);
+            console.log(`[get-balances] Snapshot file exists and is accessible`);
+          } catch (e) {
+            console.error(`[get-balances] Snapshot file not found or not accessible: ${options.snapshotPath}`, e);
+          }
+        } else {
+          console.log(`[get-balances] No snapshot provided, using on-chain data only`);
         }
 
         console.log(`Executing get-balances:`, synthesizerPath, args.join(" "));
@@ -609,8 +660,8 @@ function setupIpcHandlers() {
           args.push("--sepolia");
         }
 
-        // Add init-tx if no previous state (first transfer)
-        if (!options.previousState && options.initTx) {
+        // Add init-tx if provided (required even when using previous-state)
+        if (options.initTx) {
           args.push("--init-tx", options.initTx);
         }
 
@@ -642,30 +693,12 @@ function setupIpcHandlers() {
           console.warn("state_snapshot.json not found in output directory");
         }
 
-        // Copy results to binaries/resource/synthesizer/output
+        // Copy results to binaries/resource/synthesizer
         const { RESOURCES } = await import("./utils/binaryConfig");
-        const synthesizerOutputDir = RESOURCES.synthesizer;
+        const synthesizerDir = RESOURCES.synthesizer;
+        const proveDir = RESOURCES.prove;
         
-        // Ensure synthesizer output directory exists
-        await fs.mkdir(synthesizerOutputDir, { recursive: true });
-        
-        // Clear existing files in synthesizer output directory
-        try {
-          const existingFiles = await fs.readdir(synthesizerOutputDir);
-          for (const file of existingFiles) {
-            const filePath = path.join(synthesizerOutputDir, file);
-            const stat = await fs.stat(filePath);
-            if (stat.isDirectory()) {
-              await fs.rm(filePath, { recursive: true, force: true });
-            } else {
-              await fs.unlink(filePath);
-            }
-          }
-        } catch (e) {
-          // Directory might be empty, continue
-        }
-
-        // Copy all files from absoluteOutputDir to synthesizerOutputDir
+        // Helper function to copy recursively
         const copyRecursive = async (src: string, dest: string) => {
           const entries = await fs.readdir(src, { withFileTypes: true });
           await fs.mkdir(dest, { recursive: true });
@@ -681,9 +714,30 @@ function setupIpcHandlers() {
             }
           }
         };
+
+        // Helper function to clear directory
+        const clearDirectory = async (dir: string) => {
+          try {
+            const existingFiles = await fs.readdir(dir);
+            for (const file of existingFiles) {
+              const filePath = path.join(dir, file);
+              const stat = await fs.stat(filePath);
+              if (stat.isDirectory()) {
+                await fs.rm(filePath, { recursive: true, force: true });
+              } else {
+                await fs.unlink(filePath);
+              }
+            }
+          } catch (e) {
+            // Directory might be empty, continue
+          }
+        };
         
-        await copyRecursive(absoluteOutputDir, synthesizerOutputDir);
-        console.log(`Copied results to synthesizer output: ${synthesizerOutputDir}`);
+        // Clear and copy synthesizer results
+        await fs.mkdir(synthesizerDir, { recursive: true });
+        await clearDirectory(synthesizerDir);
+        await copyRecursive(absoluteOutputDir, synthesizerDir);
+        console.log(`Copied synthesizer results to: ${synthesizerDir}`);
 
         // Execute prove command
         let proveSuccess = false;
@@ -703,12 +757,16 @@ function setupIpcHandlers() {
           }
           
           if (!proveStderr) {
+            // Clear and prepare prove output directory
+            await fs.mkdir(proveDir, { recursive: true });
+            await clearDirectory(proveDir);
+            
             // Command format: ./bin/prove <qap-path> <synthesizer-output-path> <setup-path> <output-path>
             const proveArgs = [
-              RESOURCES.qap,              // qap-path
-              synthesizerOutputDir,       // synthesizer-output-path
-              RESOURCES.setup,            // setup-path
-              synthesizerOutputDir,       // output-path (proof files will be written here)
+              RESOURCES.qap,        // qap-path
+              synthesizerDir,       // synthesizer-output-path
+              RESOURCES.setup,      // setup-path
+              proveDir,             // output-path (proof files will be written here)
             ];
             
             console.log(`Executing prove:`, proveBinaryPath, proveArgs.join(" "));
@@ -730,6 +788,7 @@ function setupIpcHandlers() {
             if (proveStderr) {
               console.error("prove stderr:", proveStderr);
             }
+            console.log(`Proof files written to: ${proveDir}`);
           }
         } catch (proveError: any) {
           console.error("prove error:", proveError);
@@ -737,7 +796,7 @@ function setupIpcHandlers() {
           proveStderr = proveError.stderr || proveError.message || proveStderr;
         }
 
-        // Create ZIP file from synthesizer output directory (includes proof files)
+        // Create ZIP file from synthesizer and prove directories
         let zipPath: string | null = null;
         try {
           const AdmZip = (await import("adm-zip")).default;
@@ -749,15 +808,35 @@ function setupIpcHandlers() {
 
           const zip = new AdmZip();
           
-          // Read all files from synthesizer output directory and add to ZIP
-          const files = await fs.readdir(synthesizerOutputDir, { recursive: true });
-          for (const file of files) {
-            const filePath = path.join(synthesizerOutputDir, file);
-            const stat = await fs.stat(filePath);
-            if (stat.isFile()) {
-              const fileContent = await fs.readFile(filePath);
-              zip.addFile(file, fileContent);
+          // Helper function to add directory to ZIP
+          const addDirectoryToZip = async (dirPath: string, zipPrefix: string) => {
+            try {
+              const files = await fs.readdir(dirPath, { recursive: true });
+              for (const file of files) {
+                const filePath = path.join(dirPath, file);
+                const stat = await fs.stat(filePath);
+                if (stat.isFile()) {
+                  const fileContent = await fs.readFile(filePath);
+                  const zipEntryPath = path.join(zipPrefix, file).replace(/\\/g, "/");
+                  zip.addFile(zipEntryPath, fileContent);
+                }
+              }
+            } catch (e) {
+              console.warn(`Failed to add ${zipPrefix} to ZIP:`, e);
             }
+          };
+          
+          // Add synthesizer directory to ZIP
+          await addDirectoryToZip(synthesizerDir, "synthesizer");
+          
+          // Add prove directory to ZIP (if it exists and has files)
+          try {
+            const proveFiles = await fs.readdir(proveDir, { recursive: true });
+            if (proveFiles.length > 0) {
+              await addDirectoryToZip(proveDir, "prove");
+            }
+          } catch (e) {
+            console.warn("Prove directory not found or empty, skipping from ZIP");
           }
 
           // Write ZIP file
@@ -773,7 +852,8 @@ function setupIpcHandlers() {
           output: stdout,
           stderr: stderr || "",
           outputDir: absoluteOutputDir,
-          synthesizerOutputDir,
+          synthesizerOutputDir: synthesizerDir,
+          proveOutputDir: proveDir,
           zipPath,
           stateSnapshot,
           proveSuccess,
@@ -798,18 +878,19 @@ function setupIpcHandlers() {
     async (
       event,
       options: {
-        proofPath: string; // Path to the uploaded proof file/directory
+        proofPath: string; // Path to the uploaded proof ZIP file
       }
     ) => {
       const { execFile } = await import("child_process");
       const { promisify } = await import("util");
       const execFileAsync = promisify(execFile);
-      const { getBinaryPath, BINARY_ROOT_DIR } = await import("./utils/binaryConfig");
+      const { getBinaryPath, BINARY_ROOT_DIR, RESOURCES } = await import("./utils/binaryConfig");
       const path = await import("path");
       const fs = await import("fs/promises");
+        const { extractZip, findProofJson, findContentDir } = await import("./utils/zipHelper");
 
       try {
-        const tokamakCliPath = getBinaryPath("tokamakCli");
+        const verifyBinaryPath = getBinaryPath("verify");
         
         // Verify proof path exists
         try {
@@ -818,30 +899,146 @@ function setupIpcHandlers() {
           throw new Error(`Proof path does not exist: ${options.proofPath}`);
         }
 
-        // Execute tokamak-cli --verify
-        const args = ["--verify", options.proofPath];
+        // Extract ZIP file and copy folders to resource directory
+        const extractedDir = await extractZip(options.proofPath);
+        const contentDir = findContentDir(extractedDir); // Handle single folder case
+        
+        // Helper function to copy directory recursively
+        const copyRecursive = async (src: string, dest: string) => {
+          const entries = await fs.readdir(src, { withFileTypes: true });
+          await fs.mkdir(dest, { recursive: true });
+          
+          for (const entry of entries) {
+            const srcPath = path.join(src, entry.name);
+            const destPath = path.join(dest, entry.name);
+            
+            if (entry.isDirectory()) {
+              await copyRecursive(srcPath, destPath);
+            } else {
+              await fs.copyFile(srcPath, destPath);
+            }
+          }
+        };
 
-        console.log(`Executing verify-proof:`, tokamakCliPath, args.join(" "));
+        // Helper function to clear directory
+        const clearDirectory = async (dir: string) => {
+          try {
+            const existingFiles = await fs.readdir(dir);
+            for (const file of existingFiles) {
+              const filePath = path.join(dir, file);
+              const stat = await fs.stat(filePath);
+              if (stat.isDirectory()) {
+                await fs.rm(filePath, { recursive: true, force: true });
+              } else {
+                await fs.unlink(filePath);
+              }
+            }
+          } catch (e) {
+            // Directory might be empty, continue
+          }
+        };
+        
+        // Copy synthesizer folder if it exists (from content directory)
+        const extractedSynthesizerPath = path.join(contentDir, "synthesizer");
+        try {
+          await fs.access(extractedSynthesizerPath);
+          await clearDirectory(RESOURCES.synthesizer);
+          await copyRecursive(extractedSynthesizerPath, RESOURCES.synthesizer);
+          console.log(`Copied synthesizer folder to: ${RESOURCES.synthesizer}`);
+        } catch (e) {
+          console.warn("synthesizer folder not found in ZIP, skipping");
+        }
+        
+        // Copy prove folder if it exists (from content directory)
+        const extractedProvePath = path.join(contentDir, "prove");
+        try {
+          await fs.access(extractedProvePath);
+          await clearDirectory(RESOURCES.prove);
+          await copyRecursive(extractedProvePath, RESOURCES.prove);
+          console.log(`Copied prove folder to: ${RESOURCES.prove}`);
+        } catch (e) {
+          throw new Error("prove folder not found in uploaded ZIP file");
+        }
+        
+        // Verify that proof.json exists in the prove directory
+        const proofJsonPath = path.join(RESOURCES.prove, "proof.json");
+        try {
+          await fs.access(proofJsonPath);
+        } catch (e) {
+          throw new Error("proof.json not found in prove folder");
+        }
 
-        const { stdout, stderr } = await execFileAsync(tokamakCliPath, args, {
+        // Execute preprocess first
+        const preprocessBinaryPath = getBinaryPath("preprocess");
+        const preprocessArgs = [
+          RESOURCES.qap,              // qap-path
+          RESOURCES.synthesizer,      // synthesizer-output-path
+          RESOURCES.setup,            // setup-path
+          RESOURCES.preprocess,       // preprocess-output-path
+        ];
+
+        console.log(`Executing preprocess:`, preprocessBinaryPath, preprocessArgs.join(" "));
+
+        let preprocessStdout = "";
+        let preprocessStderr = "";
+        try {
+          const preprocessResult = await execFileAsync(preprocessBinaryPath, preprocessArgs, {
+            maxBuffer: 10 * 1024 * 1024, // 10MB buffer
+            cwd: BINARY_ROOT_DIR,
+          });
+          preprocessStdout = preprocessResult.stdout || "";
+          preprocessStderr = preprocessResult.stderr || "";
+          console.log("preprocess stdout:", preprocessStdout);
+          if (preprocessStderr) {
+            console.error("preprocess stderr:", preprocessStderr);
+          }
+        } catch (preprocessError: any) {
+          console.error("preprocess error:", preprocessError);
+          preprocessStdout = preprocessError.stdout || "";
+          preprocessStderr = preprocessError.stderr || preprocessError.message || "";
+          // Continue with verify even if preprocess has warnings (it might already exist)
+          if (preprocessStderr.includes("panic") || preprocessStderr.includes("fatal")) {
+            throw new Error(`Preprocess failed: ${preprocessStderr}`);
+          }
+        }
+
+        // Execute verify command: ./bin/verify <qap-path> <synthesizer-output-path> <setup-path> <preprocess-path> <proof-path>
+        // Note: proof-path should be the prove directory, not the proof.json file
+        const verifyArgs = [
+          RESOURCES.qap,              // qap-path
+          RESOURCES.synthesizer,      // synthesizer-output-path
+          RESOURCES.setup,            // setup-path
+          RESOURCES.preprocess,       // preprocess-path
+          RESOURCES.prove,            // proof-path (directory containing proof.json)
+        ];
+
+        console.log(`Executing verify:`, verifyBinaryPath, verifyArgs.join(" "));
+
+        const { stdout, stderr } = await execFileAsync(verifyBinaryPath, verifyArgs, {
           maxBuffer: 10 * 1024 * 1024, // 10MB buffer
           cwd: BINARY_ROOT_DIR, // Set working directory to binaries root
         });
 
         if (stderr) {
-          console.error("verify-proof stderr:", stderr);
+          console.error("verify stderr:", stderr);
         }
 
-        console.log("verify-proof stdout:", stdout);
+        console.log("verify stdout:", stdout);
 
         // Check if verification was successful
-        // tokamak-cli typically returns exit code 0 on success
-        const success = stdout.includes("success") || stdout.includes("verified") || !stderr.includes("error");
+        // verify returns "true" or "false" in stdout
+        // Also check for error messages in stderr
+        const stdoutLower = stdout.toLowerCase().trim();
+        const hasError = stderr.includes("error") || stderr.includes("failed") || stderr.includes("panic");
+        const verificationResult = stdoutLower.includes("true") && !stdoutLower.includes("false");
+        const success = !hasError && verificationResult;
 
         return {
           success,
           output: stdout,
           stderr: stderr || "",
+          preprocessOutput: preprocessStdout,
+          preprocessStderr: preprocessStderr,
         };
       } catch (error: any) {
         console.error("verify-proof error:", error);

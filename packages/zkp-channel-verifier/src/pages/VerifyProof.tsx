@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   Check,
   X,
+  AlertTriangle,
 } from "lucide-react";
 import Layout from "@/components/Layout";
 
@@ -63,24 +64,44 @@ const VerifyProof: React.FC = () => {
         proofPath: uploadedFile.path,
       });
 
-      // Add output to logs
+      // Add preprocess output to logs
+      if (result.preprocessOutput) {
+        setLogs((prev) => [...prev, "🔄 Preprocess execution:"]);
+        const preprocessLines = result.preprocessOutput.split("\n").filter((line: string) => line.trim());
+        setLogs((prev) => [...prev, ...preprocessLines.map((line: string) => `  > ${line}`)]);
+      }
+
+      if (result.preprocessStderr) {
+        const preprocessStderrLines = result.preprocessStderr.split("\n").filter((line: string) => line.trim());
+        setLogs((prev) => [...prev, ...preprocessStderrLines.map((line: string) => `  ⚠️ ${line}`)]);
+      }
+
+      // Add verify output to logs
       if (result.output) {
+        setLogs((prev) => [...prev, "🔍 Verify execution:"]);
         const outputLines = result.output.split("\n").filter((line: string) => line.trim());
-        setLogs((prev) => [...prev, ...outputLines.map((line: string) => `> ${line}`)]);
+        setLogs((prev) => [...prev, ...outputLines.map((line: string) => `  > ${line}`)]);
       }
 
       if (result.stderr) {
         const stderrLines = result.stderr.split("\n").filter((line: string) => line.trim());
-        setLogs((prev) => [...prev, ...stderrLines.map((line: string) => `⚠️ ${line}`)]);
+        setLogs((prev) => [...prev, ...stderrLines.map((line: string) => `  ⚠️ ${line}`)]);
       }
 
-      if (result.success) {
+      // Check if verification result is false in stdout
+      const outputLower = (result.output || "").toLowerCase().trim();
+      const isVerificationFalse = outputLower.includes("false") && !outputLower.includes("true");
+
+      if (result.success && !isVerificationFalse) {
         setLogs((prev) => [...prev, "✅ Verification completed successfully."]);
         setVerificationResult("success");
       } else {
+        const errorMessage = isVerificationFalse
+          ? "Proof verification failed: The proof is invalid"
+          : result.error || "Verification failed";
         setLogs((prev) => [
           ...prev,
-          `❌ Verification failed: ${result.error || "Unknown error"}`,
+          `⚠️ ${errorMessage}`,
         ]);
         setVerificationResult("failure");
       }
@@ -163,7 +184,13 @@ const VerifyProof: React.FC = () => {
                     <CheckCircle2 className="w-4 h-4 text-white" />
                   </div>
                 </div>
-                <div className="text-3xl font-bold text-white">
+                <div className={`text-3xl font-bold ${
+                  verificationResult === "success"
+                    ? "text-green-400"
+                    : verificationResult === "failure"
+                      ? "text-yellow-400"
+                      : "text-white"
+                }`}>
                   {verificationResult === "success"
                     ? "Verified"
                     : verificationResult === "failure"
@@ -210,9 +237,9 @@ const VerifyProof: React.FC = () => {
                 <h2 className="text-lg font-bold text-white">
                   Your Information
                 </h2>
-                <p className="text-sm text-gray-400">
-                  Upload and verify your proof files
-                </p>
+              <p className="text-sm text-gray-400">
+                Upload a ZIP file containing proof.json to verify
+              </p>
               </div>
             </div>
 
@@ -222,7 +249,7 @@ const VerifyProof: React.FC = () => {
             >
               <FileText className="w-6 h-6" />
               <span className="font-semibold">
-                Upload Proof File
+                Upload Proof ZIP File
               </span>
             </button>
 
@@ -321,7 +348,7 @@ const VerifyProof: React.FC = () => {
               className={`bg-gradient-to-b from-[#1a2347] to-[#0a1930] border-2 ${
                 verificationResult === "success"
                   ? "border-green-500"
-                  : "border-red-500"
+                  : "border-yellow-500"
               }`}
               style={{ padding: "40px", marginBottom: "48px" }}
             >
@@ -330,13 +357,13 @@ const VerifyProof: React.FC = () => {
                   className={`p-3 rounded ${
                     verificationResult === "success"
                       ? "bg-green-500"
-                      : "bg-red-500"
+                      : "bg-yellow-500"
                   }`}
                 >
                   {verificationResult === "success" ? (
                     <Check className="w-8 h-8 text-white" />
                   ) : (
-                    <X className="w-8 h-8 text-white" />
+                    <AlertTriangle className="w-8 h-8 text-white" />
                   )}
                 </div>
                 <div className="flex-1">
@@ -349,12 +376,12 @@ const VerifyProof: React.FC = () => {
                     className={`text-sm ${
                       verificationResult === "success"
                         ? "text-green-300"
-                        : "text-red-300"
+                        : "text-yellow-300"
                     }`}
                   >
                     {verificationResult === "success"
                       ? "The proof has been verified successfully. All checks passed."
-                      : "The proof verification failed. Please check the logs for details."}
+                      : "The proof verification failed. The proof is invalid or does not match the expected result."}
                   </p>
                 </div>
               </div>
@@ -376,13 +403,13 @@ const VerifyProof: React.FC = () => {
               <li className="flex items-start gap-2">
                 <span className="text-[#4fc3f7] mt-1">•</span>
                 <span>
-                  Upload a proof file (directory or ZIP file)
+                  Upload a ZIP file containing proof.json (generated from Generate Proof)
                 </span>
               </li>
               <li className="flex items-start gap-2">
                 <span className="text-[#4fc3f7] mt-1">•</span>
                 <span>
-                  Click "Verify Proof" to start the verification process using tokamak-cli
+                  Click "Verify Proof" to start the verification process using verify binary
                 </span>
               </li>
               <li className="flex items-start gap-2">

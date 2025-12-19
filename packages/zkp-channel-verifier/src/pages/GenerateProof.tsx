@@ -93,14 +93,10 @@ function parseGetBalancesOutput(output: string): ChannelState | null {
 const GenerateProof: React.FC = () => {
   const navigate = useNavigate();
   const [stateFile, setStateFile] = useState<UploadedFile | null>(null);
-  const [l2PrivateKey, setL2PrivateKey] = useState(
-    "0x0cc941e930e8dd1803e7319d1da2fffb88e37b0e99297401cabc3c679bf4885f"
-  ); // L2 private key input
+  const [l2PrivateKey, setL2PrivateKey] = useState(""); // L2 private key input
   const [l2Address, setL2Address] = useState(""); // Derived L2 address
   const [isDerivingAddress, setIsDerivingAddress] = useState(false);
-  const [recipientAddress, setRecipientAddress] = useState(
-    "0x47f831e21935601cbf9fa1467ac97a653cfe0f23"
-  ); // To address (recipient)
+  const [recipientAddress, setRecipientAddress] = useState(""); // To address (recipient)
   const [inputMode, setInputMode] = useState<"select" | "manual">("select");
   const [amount, setAmount] = useState("");
   const [selectedToken, setSelectedToken] = useState("ETH"); // 선택된 토큰 심볼 (기본값 ETH)
@@ -118,7 +114,7 @@ const GenerateProof: React.FC = () => {
   const [newStateSnapshot, setNewStateSnapshot] = useState<string | null>(null); // For development: direct state_snapshot.json download
 
   // 온체인 데이터
-  const [channelId, setChannelId] = useState<string>("1"); // 채널 ID (기본값: 3, Sepolia testnet)
+  const [channelId, setChannelId] = useState<string>(""); // 채널 ID
   const [supportedTokens, setSupportedTokens] = useState<string[]>([
     "ETH",
     "WTON",
@@ -137,6 +133,7 @@ const GenerateProof: React.FC = () => {
     },
   ]);
   const [isLoadingChannelData, setIsLoadingChannelData] = useState(false);
+  const [transactionInfoLoaded, setTransactionInfoLoaded] = useState(false); // Track if transaction-info.json was loaded
 
   // Channel state
   const [channelState, setChannelState] = useState<ChannelState | null>(null);
@@ -145,10 +142,16 @@ const GenerateProof: React.FC = () => {
   const [initTx, setInitTx] = useState<string>(""); // Channel initialization transaction hash
 
   // Load channel state on channelId change
+  // Skip if stateFile exists (snapshot will be loaded in handleStateUpload)
   useEffect(() => {
     if (!channelId) {
       setChannelState(null);
       setInitialRoot("");
+      return;
+    }
+
+    // If stateFile exists, skip automatic loading (snapshot will be loaded in handleStateUpload)
+    if (stateFile) {
       return;
     }
 
@@ -197,7 +200,7 @@ const GenerateProof: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [channelId]);
+  }, [channelId, stateFile]);
 
   // Derive L2 address from L2 private key
   useEffect(() => {
@@ -358,8 +361,25 @@ const GenerateProof: React.FC = () => {
 
   const handleStateUpload = async () => {
     try {
+      console.log("handleStateUpload called");
+      setLogs((prev) => [...prev, "📤 Starting file upload..."]);
+      
+      // Reset transaction info loaded state when uploading new file
+      setTransactionInfoLoaded(false);
+      
       const result = await window.electronAPI.uploadFile();
+      console.log("Upload result:", result);
+      
       if (result) {
+        setLogs((prev) => [
+          ...prev,
+          `📦 File received: ${result.filePath?.split("/").pop() || "unknown"}`,
+          `📦 Is ZIP: ${result.isZip ? "Yes" : "No"}`,
+          `📦 Extracted Dir: ${result.extractedDir || "N/A"}`,
+          `📦 Has transactionInfo: ${result.transactionInfo ? "Yes" : "No"}`,
+          `📦 Has channelInfo: ${result.channelInfo ? "Yes" : "No"}`,
+        ]);
+        
         if (result.isZip) {
           // ZIP file: extracted directory path is provided
           if (!result.extractedDir) {
@@ -379,22 +399,114 @@ const GenerateProof: React.FC = () => {
             }
           }
 
-          // Read channel-info.json to get initializedTxHash
+          // Read transaction-info.json to get all transaction details
           let initTxHash = "";
-          if (result.channelInfo) {
+          const transactionInfoData = result.transactionInfo || result.channelInfo; // Support both for backward compatibility
+          
+          setLogs((prev) => [
+            ...prev,
+            `🔍 Checking for transaction-info.json...`,
+            transactionInfoData 
+              ? `📄 transaction-info.json found` 
+              : `⚠️ transaction-info.json not found in ZIP file`,
+          ]);
+          
+          if (transactionInfoData) {
             try {
-              const channelInfo = JSON.parse(result.channelInfo);
-              if (channelInfo.initializedTxHash) {
-                initTxHash = channelInfo.initializedTxHash;
+              const transactionInfo = JSON.parse(transactionInfoData);
+              console.log("Parsed transaction-info.json:", transactionInfo);
+              
+              setLogs((prev) => [
+                ...prev,
+                `📋 Parsed transaction-info.json: ${JSON.stringify(transactionInfo)}`,
+              ]);
+              
+              // Set initializedTxHash
+              if (transactionInfo.initializedTxHash) {
+                initTxHash = transactionInfo.initializedTxHash;
                 setInitTx(initTxHash);
                 setLogs((prev) => [
                   ...prev,
-                  `🔗 Initialization TX found: ${initTxHash.substring(0, 16)}...`,
+                  `🔗 Initialization TX: ${initTxHash.substring(0, 16)}...`,
                 ]);
               }
+              
+              // Set channelId
+              if (transactionInfo.channelId) {
+                setChannelId(String(transactionInfo.channelId));
+                setLogs((prev) => [
+                  ...prev,
+                  `📋 Channel ID: ${transactionInfo.channelId}`,
+                ]);
+              } else {
+                setLogs((prev) => [
+                  ...prev,
+                  `⚠️ channelId not found in transaction-info.json`,
+                ]);
+              }
+              
+              // Set l2PrivateKey
+              if (transactionInfo.l2PrivateKey) {
+                setL2PrivateKey(transactionInfo.l2PrivateKey);
+                setLogs((prev) => [
+                  ...prev,
+                  `🔑 L2 Private Key loaded: ${transactionInfo.l2PrivateKey.substring(0, 10)}...`,
+                ]);
+              } else {
+                setLogs((prev) => [
+                  ...prev,
+                  `⚠️ l2PrivateKey not found in transaction-info.json`,
+                ]);
+              }
+              
+              // Set recipientAddress (toAddress)
+              if (transactionInfo.toAddress) {
+                setRecipientAddress(transactionInfo.toAddress);
+                setLogs((prev) => [
+                  ...prev,
+                  `👤 Recipient Address: ${transactionInfo.toAddress}`,
+                ]);
+              } else {
+                setLogs((prev) => [
+                  ...prev,
+                  `⚠️ toAddress not found in transaction-info.json`,
+                ]);
+              }
+              
+              // Set amount (tokenAmount)
+              if (transactionInfo.tokenAmount) {
+                setAmount(String(transactionInfo.tokenAmount));
+                setLogs((prev) => [
+                  ...prev,
+                  `💰 Amount: ${transactionInfo.tokenAmount}`,
+                ]);
+              } else {
+                setLogs((prev) => [
+                  ...prev,
+                  `⚠️ tokenAmount not found in transaction-info.json`,
+                ]);
+              }
+              
+              // Mark transaction info as loaded
+              setTransactionInfoLoaded(true);
+              setLogs((prev) => [
+                ...prev,
+                `✅ Transaction info loaded from transaction-info.json`,
+              ]);
             } catch (e) {
-              console.warn("Failed to parse channel-info.json:", e);
+              console.error("Failed to parse transaction-info.json:", e);
+              setLogs((prev) => [
+                ...prev,
+                `❌ Failed to parse transaction-info.json: ${e instanceof Error ? e.message : String(e)}`,
+              ]);
+              setTransactionInfoLoaded(false);
             }
+          } else {
+            setLogs((prev) => [
+              ...prev,
+              `⚠️ transaction-info.json not found. Please ensure the ZIP file contains transaction-info.json`,
+            ]);
+            setTransactionInfoLoaded(false);
           }
 
           setStateFile({
@@ -413,7 +525,13 @@ const GenerateProof: React.FC = () => {
           ]);
 
           // Load balances from uploaded state snapshot
-          if (result.stateSnapshot && channelId) {
+          // Check if state_snapshot.json exists in extracted directory
+          // Use channelId from transactionInfo if available, otherwise use state channelId
+          const channelIdToUse = transactionInfoData 
+            ? JSON.parse(transactionInfoData).channelId 
+            : channelId;
+            
+          if (result.extractedDir && channelIdToUse) {
             setIsLoadingState(true);
             setLogs((prev) => [
               ...prev,
@@ -424,15 +542,31 @@ const GenerateProof: React.FC = () => {
               const settings = storage.getSettings();
               const rpcUrl = settings.rpcUrl;
 
-              // Find state_snapshot.json in extracted directory
+              // Find state_snapshot.json in extracted directory (contentDir)
+              // result.extractedDir is already the contentDir (from findContentDir)
               const snapshotPath = `${result.extractedDir}/state_snapshot.json`;
+              
+              // If result.stateSnapshot exists, it means the file was found and parsed
+              // Otherwise, we'll still try to use the snapshot path (file might exist but wasn't parsed)
+              const hasStateSnapshot = !!result.stateSnapshot;
+              
+              setLogs((prev) => [
+                ...prev,
+                `📄 Snapshot path: ${snapshotPath}`,
+                `📋 Using channel ID: ${channelIdToUse}`,
+                hasStateSnapshot 
+                  ? `✅ state_snapshot.json found and parsed, using snapshot data`
+                  : `⚠️ state_snapshot.json not parsed, but will try to use snapshot path`,
+              ]);
 
               // Call get-balances with snapshot path
+              // Even if result.stateSnapshot is undefined, the file might still exist
+              // and get-balances can read it directly
               const balancesResult = await window.electron.invoke(
                 "get-balances",
                 {
-                  channelId,
-                  snapshotPath,
+                  channelId: String(channelIdToUse),
+                  snapshotPath: snapshotPath,
                   rpcUrl,
                   network: "sepolia",
                 }
@@ -443,13 +577,40 @@ const GenerateProof: React.FC = () => {
                 setChannelState(parsed);
                 setLogs((prev) => [
                   ...prev,
-                  `✅ Loaded balances from uploaded state`,
+                  `✅ Loaded balances from uploaded state snapshot`,
+                  `📊 State Root: ${parsed.stateRoot}`,
+                  `📊 Source: ${parsed.source}`,
+                  `📊 Participants: ${parsed.participants.length}`,
                 ]);
               } else {
                 setLogs((prev) => [
                   ...prev,
                   `⚠️ Failed to load balances: ${balancesResult.error}`,
+                  `ℹ️ Falling back to on-chain data...`,
                 ]);
+                
+                // Fallback to on-chain data
+                try {
+                  const onChainResult = await window.electron.invoke(
+                    "get-balances",
+                    {
+                      channelId,
+                      rpcUrl,
+                      network: "sepolia",
+                    }
+                  );
+                  
+                  if (onChainResult.success) {
+                    const parsed = parseGetBalancesOutput(onChainResult.output);
+                    setChannelState(parsed);
+                    setLogs((prev) => [
+                      ...prev,
+                      `✅ Loaded balances from on-chain data`,
+                    ]);
+                  }
+                } catch (fallbackError: any) {
+                  console.error("Failed to load on-chain balances:", fallbackError);
+                }
               }
             } catch (error: any) {
               console.error("Failed to load balances from snapshot:", error);
@@ -562,8 +723,8 @@ const GenerateProof: React.FC = () => {
       const hasStateSnapshot =
         stateFile && stateFile.content && stateFile.content.trim() !== "";
 
-      // Add init-tx if no previous state (first transfer)
-      if (!hasStateSnapshot && initTx) {
+      // Add init-tx if provided (required even when using previous-state)
+      if (initTx) {
         transferOptions.initTx = initTx;
         setLogs((prev) => [...prev, `📝 Using init-tx: ${initTx}`]);
       }
@@ -596,6 +757,9 @@ const GenerateProof: React.FC = () => {
           "✅ L2 transfer adapter execution completed!",
           `📁 Output directory: ${result.outputDir}`,
           `📂 Synthesizer output: ${result.synthesizerOutputDir || "N/A"}`,
+          ...(result.proveOutputDir
+            ? [`📂 Prove output: ${result.proveOutputDir}`]
+            : []),
           ...result.output.split("\n").filter((line: string) => line.trim()),
         ]);
 
@@ -734,6 +898,75 @@ const GenerateProof: React.FC = () => {
             </div>
           </div>
 
+          {/* State File Upload Section - Moved to top */}
+          <div
+            className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border border-[#4fc3f7] shadow-lg shadow-[#4fc3f7]/20"
+            style={{ padding: "32px", marginBottom: "48px" }}
+          >
+            <div
+              className="flex items-center"
+              style={{ gap: "12px", marginBottom: "24px" }}
+            >
+              <div className="bg-[#4fc3f7] p-2 rounded">
+                <FileText className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-white">State File Upload</h2>
+                <p className="text-sm text-gray-400">
+                  Upload a ZIP file containing transaction-info.json and state_snapshot.json
+                </p>
+              </div>
+            </div>
+
+            <div>
+              <label
+                className="block font-medium text-gray-300"
+                style={{ fontSize: "16px", marginBottom: "12px" }}
+              >
+                State File
+              </label>
+              <button
+                onClick={handleStateUpload}
+                className="w-full border-2 border-dashed border-[#4fc3f7]/30 hover:border-[#4fc3f7] bg-[#0a1930]/50 text-gray-300 hover:text-[#4fc3f7] transition-all flex items-center justify-center"
+                style={{ padding: "24px", gap: "12px" }}
+              >
+                <FileText className="w-6 h-6" />
+                <span className="font-semibold" style={{ fontSize: "16px" }}>
+                  {stateFile ? "Change State File" : "Upload State File"}
+                </span>
+              </button>
+              {stateFile && (
+                <div
+                  className="bg-[#0a1930]/50 border border-[#4fc3f7]/30"
+                  style={{ marginTop: "12px", padding: "16px" }}
+                >
+                  <div className="flex items-center" style={{ gap: "12px" }}>
+                    <div
+                      className="bg-green-500 rounded"
+                      style={{ padding: "8px" }}
+                    >
+                      <Check className="w-4 h-4 text-white" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p
+                        className="text-white font-medium truncate"
+                        style={{ fontSize: "15px", marginBottom: "4px" }}
+                      >
+                        {stateFile.name}
+                      </p>
+                      <p
+                        className="text-gray-400 font-mono truncate"
+                        style={{ fontSize: "13px" }}
+                      >
+                        {stateFile.path}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Channel State */}
           {channelState && (
             <div
@@ -857,22 +1090,18 @@ const GenerateProof: React.FC = () => {
             channelParticipants={channelParticipants}
             supportedTokens={supportedTokens}
             isLoadingChannelData={isLoadingChannelData}
-            onRefresh={fetchChannelData}
+            transactionInfoLoaded={transactionInfoLoaded}
           />
 
           {/* Proof Generation */}
           <ProofGeneration
             stateFile={stateFile}
-            onStateUpload={handleStateUpload}
             l2PrivateKey={l2PrivateKey}
             onL2PrivateKeyChange={setL2PrivateKey}
             l2Address={l2Address}
             isDerivingAddress={isDerivingAddress}
             recipientAddress={recipientAddress}
             onRecipientAddressChange={setRecipientAddress}
-            inputMode={inputMode}
-            onInputModeChange={setInputMode}
-            channelParticipants={channelParticipants}
             supportedTokens={supportedTokens}
             selectedToken={selectedToken}
             onSelectedTokenChange={setSelectedToken}
@@ -880,7 +1109,7 @@ const GenerateProof: React.FC = () => {
             onAmountChange={setAmount}
             isGenerating={isGenerating}
             onGenerate={handleGenerate}
-            tokenInfo={tokenInfo}
+            transactionInfoLoaded={transactionInfoLoaded}
           />
 
           {/* Logs Section */}

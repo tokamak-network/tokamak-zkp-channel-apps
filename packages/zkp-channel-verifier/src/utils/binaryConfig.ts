@@ -50,7 +50,8 @@ export const RESOURCES = {
   setup: resolve(BINARY_ROOT_DIR, "resource/setup/output"),
   preprocess: resolve(BINARY_ROOT_DIR, "resource/preprocess/output"),
   qap: resolve(BINARY_ROOT_DIR, "resource/qap-compiler/library"),
-  synthesizer: resolve(BINARY_ROOT_DIR, "resource/synthesizer/output"),
+  synthesizer: resolve(BINARY_ROOT_DIR, "resource/synthesizer"),
+  prove: resolve(BINARY_ROOT_DIR, "resource/prove"),
 };
 
 // Temporary output directory
