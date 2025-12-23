@@ -12,6 +12,8 @@ import {
   Download,
   RefreshCw,
   Database,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 import { ethers } from "ethers";
 import { Address } from "viem";
@@ -98,6 +100,7 @@ const GenerateProof: React.FC = () => {
   const [generationComplete, setGenerationComplete] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [outputZipPath, setOutputZipPath] = useState<string | null>(null);
+  const [showLogs, setShowLogs] = useState(false); // Advanced option: show/hide logs
 
   // 온체인 데이터 (필요시 사용)
   const [channelId, setChannelId] = useState<string>(""); // 채널 ID
@@ -1024,24 +1027,66 @@ const GenerateProof: React.FC = () => {
             channelId={channelId}
           />
 
-          {/* Logs Section */}
+          {/* Logs Section - Advanced Option */}
           {logs.length > 0 && (
             <div
               className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border border-[#4fc3f7]/30"
               style={{ padding: "32px", marginBottom: "48px" }}
             >
-              <h3
-                className="text-lg font-semibold text-white"
-                style={{ marginBottom: "16px" }}
+              <button
+                onClick={() => setShowLogs(!showLogs)}
+                className="w-full flex items-center justify-between text-left"
+                style={{ marginBottom: showLogs ? "16px" : "0" }}
               >
-                Execution Logs
-              </h3>
-              <div className="bg-black/50 border border-[#4fc3f7]/20 p-4 max-h-60 overflow-y-auto font-mono text-xs">
-                {logs.map((log, index) => (
-                  <div key={index} className="text-gray-300 mb-1">
-                    {log}
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-semibold text-white">
+                    Execution Logs
+                  </h3>
+                  <span className="text-xs text-gray-400 bg-[#4fc3f7]/20 px-2 py-1 rounded">
+                    Advanced
+                  </span>
+                </div>
+                {showLogs ? (
+                  <ChevronUp className="w-5 h-5 text-[#4fc3f7]" />
+                ) : (
+                  <ChevronDown className="w-5 h-5 text-[#4fc3f7]" />
+                )}
+              </button>
+              {showLogs && (
+                <div className="bg-black/50 border border-[#4fc3f7]/20 p-4 max-h-60 overflow-y-auto font-mono text-xs">
+                  {logs.map((log, index) => (
+                    <div key={index} className="text-gray-300 mb-1">
+                      {log}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Generating Spinner */}
+          {isGenerating && !generationComplete && (
+            <div
+              className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border-2 border-[#4fc3f7]"
+              style={{ padding: "40px", marginBottom: "48px" }}
+            >
+              <div className="flex items-start" style={{ gap: "16px" }}>
+                <div className="bg-[#4fc3f7] p-3 rounded">
+                  <RefreshCw className="w-8 h-8 text-white animate-spin" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-xl font-bold text-white mb-2">
+                    Generating Proof
+                  </h3>
+                  <p className="text-sm text-[#4fc3f7] mb-4">
+                    Please wait while the proof is being generated. This may
+                    take a few minutes...
+                  </p>
+                  <div className="flex items-center gap-2 text-gray-400 text-sm">
+                    <div className="w-2 h-2 bg-[#4fc3f7] rounded-full animate-pulse"></div>
+                    <span>Running prover...</span>
                   </div>
-                ))}
+                </div>
               </div>
             </div>
           )}
@@ -1091,31 +1136,10 @@ const GenerateProof: React.FC = () => {
             >
               Next Steps
             </h3>
-            <ul className="space-y-2 text-sm text-gray-300">
-              <li className="flex items-start gap-2">
-                <span className="text-[#4fc3f7] mt-1">•</span>
-                <span>
-                  Run Synthesizer in your browser to generate circuit files
-                </span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="text-[#4fc3f7] mt-1">•</span>
-                <span>Upload the Synthesizer output ZIP file</span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="text-[#4fc3f7] mt-1">•</span>
-                <span>
-                  Click "Generate Proof" to create a proof from the Synthesizer
-                  output
-                </span>
-              </li>
-              <li className="flex items-start gap-2">
-                <span className="text-[#4fc3f7] mt-1">•</span>
-                <span>
-                  Download the generated proof ZIP file and submit it on-chain
-                </span>
-              </li>
-            </ul>
+            <p className="text-sm text-gray-300">
+              Download the generated proof ZIP file and upload it to State
+              Explorer using the "Submit Proof" button.
+            </p>
           </div>
         </div>
       </div>

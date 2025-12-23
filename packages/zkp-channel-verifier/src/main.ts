@@ -543,12 +543,19 @@ function setupIpcHandlers() {
         const folderName = `channel-proof-${timestamp}`;
 
         // Add synthesizer files to ZIP under synthesizer/ folder
+        // Exclude placementVariables.json (case-insensitive check)
         const synthesizerFiles = fs.readdirSync(synthesizerOutputDir);
         for (const file of synthesizerFiles) {
+          // Skip placementVariables.json (case-insensitive)
+          if (file.toLowerCase() === "placementvariables.json") {
+            console.log(`[run-prover] Skipping placementVariables.json: ${file}`);
+            continue;
+          }
           const filePath = join(synthesizerOutputDir, file);
           const stat = fs.statSync(filePath);
           if (stat.isFile()) {
             zip.addLocalFile(filePath, `${folderName}/synthesizer`);
+            console.log(`[run-prover] Added to ZIP: ${file}`);
           }
         }
 
