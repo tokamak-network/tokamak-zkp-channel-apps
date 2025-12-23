@@ -11,7 +11,8 @@
     "make": "electron-forge make",
     "make:signed": "source .env 2>/dev/null || true && NODE_ENV=production electron-forge make --platform=darwin",
     "publish": "electron-forge publish",
-    "lint": "eslint --ext .ts,.tsx ."
+    "lint": "eslint --ext .ts,.tsx .",
+    "postinstall": "npm rebuild macos-alias || true"
   },
   "keywords": [
     "zkp",

@@ -92,66 +92,55 @@ function parseGetBalancesOutput(output: string): ChannelState | null {
 
 const GenerateProof: React.FC = () => {
   const navigate = useNavigate();
-  const [stateFile, setStateFile] = useState<UploadedFile | null>(null);
-  const [l2PrivateKey, setL2PrivateKey] = useState(""); // L2 private key input
-  const [l2Address, setL2Address] = useState(""); // Derived L2 address
-  const [isDerivingAddress, setIsDerivingAddress] = useState(false);
-  const [recipientAddress, setRecipientAddress] = useState(""); // To address (recipient)
-  const [inputMode, setInputMode] = useState<"select" | "manual">("select");
-  const [amount, setAmount] = useState("");
-  const [selectedToken, setSelectedToken] = useState("ETH"); // 선택된 토큰 심볼 (기본값 ETH)
-  const [allowedTokenAddresses, setAllowedTokenAddresses] = useState<string[]>(
-    []
-  ); // 채널의 allowedTokens 주소 배열
-  const [tokenInfo, setTokenInfo] = useState<{
-    symbol: string;
-    decimals: number;
-  } | null>(null); // 현재 선택된 토큰의 정보
+  const [synthesizerOutputFile, setSynthesizerOutputFile] =
+    useState<UploadedFile | null>(null); // Synthesizer 결과 ZIP 파일
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationComplete, setGenerationComplete] = useState(false);
   const [logs, setLogs] = useState<string[]>([]);
   const [outputZipPath, setOutputZipPath] = useState<string | null>(null);
-  const [newStateSnapshot, setNewStateSnapshot] = useState<string | null>(null); // For development: direct state_snapshot.json download
 
-  // 온체인 데이터
+  // 온체인 데이터 (필요시 사용)
   const [channelId, setChannelId] = useState<string>(""); // 채널 ID
-  const [supportedTokens, setSupportedTokens] = useState<string[]>([
-    "ETH",
-    "WTON",
-    "USDT",
-  ]); // 기본 토큰 목록
   const [channelParticipants, setChannelParticipants] = useState<
     { address: string; label: string }[]
-  >([
-    {
-      address: "0x1234567890123456789012345678901234567890",
-      label: "Participant 1",
-    },
-    {
-      address: "0x9876543210987654321098765432109876543210",
-      label: "Participant 2",
-    },
-  ]);
+  >([]);
   const [isLoadingChannelData, setIsLoadingChannelData] = useState(false);
-  const [transactionInfoLoaded, setTransactionInfoLoaded] = useState(false); // Track if transaction-info.json was loaded
 
   // Channel state
   const [channelState, setChannelState] = useState<ChannelState | null>(null);
   const [isLoadingState, setIsLoadingState] = useState(false);
   const [initialRoot, setInitialRoot] = useState<string>(""); // Channel's initial root
-  const [initTx, setInitTx] = useState<string>(""); // Channel initialization transaction hash
+
+  // State file (from ZIP upload)
+  const [stateFile, setStateFile] = useState<{
+    name: string;
+    path: string;
+  } | null>(null);
+
+  // Token related states
+  const [supportedTokens, setSupportedTokens] = useState<string[]>([]);
+  const [selectedToken, setSelectedToken] = useState<string>("");
+  const [allowedTokenAddresses, setAllowedTokenAddresses] = useState<string[]>(
+    []
+  );
+  const [tokenInfo, setTokenInfo] = useState<{
+    address: string;
+    symbol: string;
+    decimals: number;
+  } | null>(null);
+
+  // Transaction info (from uploaded ZIP)
+  const [initTx, setInitTx] = useState<string>(""); // Initial transaction hash
+  const [recipientAddress, setRecipientAddress] = useState<string>("");
+  const [amount, setAmount] = useState<string>("");
+  const [transactionInfoLoaded, setTransactionInfoLoaded] =
+    useState<boolean>(false);
+  const [signature, setSignature] = useState<string>(""); // Signature from channel-info.json
+  const [newStateSnapshot, setNewStateSnapshot] = useState<string | null>(null); // New state snapshot after synthesizer
 
   // Load channel state on channelId change
-  // Skip if stateFile exists (snapshot will be loaded in handleStateUpload)
   useEffect(() => {
     if (!channelId) {
-      setChannelState(null);
-      setInitialRoot("");
-      return;
-    }
-
-    // If stateFile exists, skip automatic loading (snapshot will be loaded in handleStateUpload)
-    if (stateFile) {
       return;
     }
 
@@ -200,36 +189,10 @@ const GenerateProof: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [channelId, stateFile]);
+  }, [channelId]);
 
-  // Derive L2 address from L2 private key
-  useEffect(() => {
-    if (!l2PrivateKey || l2PrivateKey.trim() === "") {
-      setL2Address("");
-      return;
-    }
-
-    const deriveAddress = async () => {
-      setIsDerivingAddress(true);
-      try {
-        const address = await deriveL2AddressFromPrivateKey(l2PrivateKey);
-        if (address) {
-          setL2Address(address);
-        } else {
-          setL2Address("");
-        }
-      } catch (error) {
-        console.error("Failed to derive L2 address:", error);
-        setL2Address("");
-      } finally {
-        setIsDerivingAddress(false);
-      }
-    };
-
-    // Debounce the address derivation (wait 500ms after user stops typing)
-    const timeoutId = setTimeout(deriveAddress, 500);
-    return () => clearTimeout(timeoutId);
-  }, [l2PrivateKey]);
+  // Note: Signature is used instead of private key, so address derivation is not needed
+  // L2 address will be derived from signature by the synthesizer
 
   // 채널 데이터를 온체인에서 가져오는 함수
   const fetchChannelData = async () => {
@@ -359,27 +322,72 @@ const GenerateProof: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelId]);
 
+  // Synthesizer 결과 ZIP 파일 업로드 핸들러
+  const handleSynthesizerOutputUpload = async () => {
+    try {
+      setLogs((prev) => [
+        ...prev,
+        "📤 Uploading Synthesizer output ZIP file...",
+      ]);
+
+      const result = await window.electronAPI.uploadFile();
+      console.log("Synthesizer output upload result:", result);
+
+      if (result) {
+        if (!result.isZip) {
+          throw new Error(
+            "Please upload a ZIP file containing Synthesizer output"
+          );
+        }
+
+        if (!result.extractedDir) {
+          throw new Error(
+            "ZIP file extraction failed: extracted directory not found"
+          );
+        }
+
+        setLogs((prev) => [
+          ...prev,
+          `✅ Synthesizer output ZIP uploaded: ${result.filePath?.split("/").pop() || "unknown"}`,
+          `📂 Extracted to: ${result.extractedDir}`,
+        ]);
+
+        // Synthesizer 출력 디렉토리 저장
+        setSynthesizerOutputFile({
+          name: result.filePath?.split("/").pop() || "synthesizer-output.zip",
+          path: result.extractedDir,
+          content: "",
+          isZip: true,
+        });
+
+        setLogs((prev) => [
+          ...prev,
+          "✅ Synthesizer output ready for proof generation",
+        ]);
+      }
+    } catch (error: any) {
+      console.error("Synthesizer output upload failed:", error);
+      setLogs((prev) => [...prev, `❌ Upload failed: ${error.message}`]);
+    }
+  };
+
+  // 기존 handleStateUpload (필요시 사용)
   const handleStateUpload = async () => {
     try {
       console.log("handleStateUpload called");
       setLogs((prev) => [...prev, "📤 Starting file upload..."]);
-      
-      // Reset transaction info loaded state when uploading new file
-      setTransactionInfoLoaded(false);
-      
+
       const result = await window.electronAPI.uploadFile();
       console.log("Upload result:", result);
-      
+
       if (result) {
         setLogs((prev) => [
           ...prev,
           `📦 File received: ${result.filePath?.split("/").pop() || "unknown"}`,
           `📦 Is ZIP: ${result.isZip ? "Yes" : "No"}`,
           `📦 Extracted Dir: ${result.extractedDir || "N/A"}`,
-          `📦 Has transactionInfo: ${result.transactionInfo ? "Yes" : "No"}`,
-          `📦 Has channelInfo: ${result.channelInfo ? "Yes" : "No"}`,
         ]);
-        
+
         if (result.isZip) {
           // ZIP file: extracted directory path is provided
           if (!result.extractedDir) {
@@ -401,26 +409,27 @@ const GenerateProof: React.FC = () => {
 
           // Read transaction-info.json to get all transaction details
           let initTxHash = "";
-          const transactionInfoData = result.transactionInfo || result.channelInfo; // Support both for backward compatibility
-          
+          const transactionInfoData =
+            result.transactionInfo || result.channelInfo; // Support both for backward compatibility
+
           setLogs((prev) => [
             ...prev,
             `🔍 Checking for transaction-info.json...`,
-            transactionInfoData 
-              ? `📄 transaction-info.json found` 
+            transactionInfoData
+              ? `📄 transaction-info.json found`
               : `⚠️ transaction-info.json not found in ZIP file`,
           ]);
-          
+
           if (transactionInfoData) {
             try {
               const transactionInfo = JSON.parse(transactionInfoData);
               console.log("Parsed transaction-info.json:", transactionInfo);
-              
+
               setLogs((prev) => [
                 ...prev,
                 `📋 Parsed transaction-info.json: ${JSON.stringify(transactionInfo)}`,
               ]);
-              
+
               // Set initializedTxHash
               if (transactionInfo.initializedTxHash) {
                 initTxHash = transactionInfo.initializedTxHash;
@@ -430,7 +439,7 @@ const GenerateProof: React.FC = () => {
                   `🔗 Initialization TX: ${initTxHash.substring(0, 16)}...`,
                 ]);
               }
-              
+
               // Set channelId
               if (transactionInfo.channelId) {
                 setChannelId(String(transactionInfo.channelId));
@@ -444,21 +453,7 @@ const GenerateProof: React.FC = () => {
                   `⚠️ channelId not found in transaction-info.json`,
                 ]);
               }
-              
-              // Set l2PrivateKey
-              if (transactionInfo.l2PrivateKey) {
-                setL2PrivateKey(transactionInfo.l2PrivateKey);
-                setLogs((prev) => [
-                  ...prev,
-                  `🔑 L2 Private Key loaded: ${transactionInfo.l2PrivateKey.substring(0, 10)}...`,
-                ]);
-              } else {
-                setLogs((prev) => [
-                  ...prev,
-                  `⚠️ l2PrivateKey not found in transaction-info.json`,
-                ]);
-              }
-              
+
               // Set recipientAddress (toAddress)
               if (transactionInfo.toAddress) {
                 setRecipientAddress(transactionInfo.toAddress);
@@ -472,7 +467,7 @@ const GenerateProof: React.FC = () => {
                   `⚠️ toAddress not found in transaction-info.json`,
                 ]);
               }
-              
+
               // Set amount (tokenAmount)
               if (transactionInfo.tokenAmount) {
                 setAmount(String(transactionInfo.tokenAmount));
@@ -486,7 +481,7 @@ const GenerateProof: React.FC = () => {
                   `⚠️ tokenAmount not found in transaction-info.json`,
                 ]);
               }
-              
+
               // Mark transaction info as loaded
               setTransactionInfoLoaded(true);
               setLogs((prev) => [
@@ -509,6 +504,54 @@ const GenerateProof: React.FC = () => {
             setTransactionInfoLoaded(false);
           }
 
+          // Read channel-info.json to get signature
+          const channelInfoData = result.channelInfoWithSignature;
+
+          setLogs((prev) => [
+            ...prev,
+            `🔍 Checking for channel-info.json...`,
+            channelInfoData
+              ? `📄 channel-info.json found`
+              : `⚠️ channel-info.json not found in ZIP file`,
+          ]);
+
+          if (channelInfoData) {
+            try {
+              const channelInfo = JSON.parse(channelInfoData);
+              console.log("Parsed channel-info.json:", channelInfo);
+
+              setLogs((prev) => [
+                ...prev,
+                `📋 Parsed channel-info.json: ${Object.keys(channelInfo).join(", ")}`,
+              ]);
+
+              // Set signature
+              if (channelInfo.signature) {
+                setSignature(channelInfo.signature);
+                setLogs((prev) => [
+                  ...prev,
+                  `✍️ Signature loaded: ${channelInfo.signature.substring(0, 20)}...`,
+                ]);
+              } else {
+                setLogs((prev) => [
+                  ...prev,
+                  `⚠️ signature not found in channel-info.json`,
+                ]);
+              }
+            } catch (e) {
+              console.error("Failed to parse channel-info.json:", e);
+              setLogs((prev) => [
+                ...prev,
+                `❌ Failed to parse channel-info.json: ${e instanceof Error ? e.message : String(e)}`,
+              ]);
+            }
+          } else {
+            setLogs((prev) => [
+              ...prev,
+              `⚠️ channel-info.json not found. Please ensure the ZIP file contains channel-info.json with signature field`,
+            ]);
+          }
+
           setStateFile({
             name: result.filePath.split("/").pop() || "unknown",
             path: result.extractedDir,
@@ -527,10 +570,10 @@ const GenerateProof: React.FC = () => {
           // Load balances from uploaded state snapshot
           // Check if state_snapshot.json exists in extracted directory
           // Use channelId from transactionInfo if available, otherwise use state channelId
-          const channelIdToUse = transactionInfoData 
-            ? JSON.parse(transactionInfoData).channelId 
+          const channelIdToUse = transactionInfoData
+            ? JSON.parse(transactionInfoData).channelId
             : channelId;
-            
+
           if (result.extractedDir && channelIdToUse) {
             setIsLoadingState(true);
             setLogs((prev) => [
@@ -545,16 +588,16 @@ const GenerateProof: React.FC = () => {
               // Find state_snapshot.json in extracted directory (contentDir)
               // result.extractedDir is already the contentDir (from findContentDir)
               const snapshotPath = `${result.extractedDir}/state_snapshot.json`;
-              
+
               // If result.stateSnapshot exists, it means the file was found and parsed
               // Otherwise, we'll still try to use the snapshot path (file might exist but wasn't parsed)
               const hasStateSnapshot = !!result.stateSnapshot;
-              
+
               setLogs((prev) => [
                 ...prev,
                 `📄 Snapshot path: ${snapshotPath}`,
                 `📋 Using channel ID: ${channelIdToUse}`,
-                hasStateSnapshot 
+                hasStateSnapshot
                   ? `✅ state_snapshot.json found and parsed, using snapshot data`
                   : `⚠️ state_snapshot.json not parsed, but will try to use snapshot path`,
               ]);
@@ -588,7 +631,7 @@ const GenerateProof: React.FC = () => {
                   `⚠️ Failed to load balances: ${balancesResult.error}`,
                   `ℹ️ Falling back to on-chain data...`,
                 ]);
-                
+
                 // Fallback to on-chain data
                 try {
                   const onChainResult = await window.electron.invoke(
@@ -599,7 +642,7 @@ const GenerateProof: React.FC = () => {
                       network: "sepolia",
                     }
                   );
-                  
+
                   if (onChainResult.success) {
                     const parsed = parseGetBalancesOutput(onChainResult.output);
                     setChannelState(parsed);
@@ -609,7 +652,10 @@ const GenerateProof: React.FC = () => {
                     ]);
                   }
                 } catch (fallbackError: any) {
-                  console.error("Failed to load on-chain balances:", fallbackError);
+                  console.error(
+                    "Failed to load on-chain balances:",
+                    fallbackError
+                  );
                 }
               }
             } catch (error: any) {
@@ -655,162 +701,79 @@ const GenerateProof: React.FC = () => {
   };
 
   const handleGenerate = async () => {
-    // Validate required fields
-    if (!l2PrivateKey || !l2Address || !recipientAddress || !amount.trim()) {
-      alert(
-        "Please fill in all fields: L2 Private Key, Recipient Address, and Amount."
-      );
-      return;
-    }
-
-    // For first transfer, init-tx is required
-    // TODO: Get init-tx from channel creation event or allow user input
-    if (!stateFile && !initTx) {
-      alert(
-        "Please provide either a state file (for subsequent transfers) or set the initialization transaction hash (for first transfer).\n\nYou can find the init-tx from the channel creation transaction."
-      );
+    // Validate synthesizer output file is uploaded
+    if (!synthesizerOutputFile) {
+      alert("Please upload a ZIP file containing Synthesizer output files.");
       return;
     }
 
     setIsGenerating(true);
     setGenerationComplete(false);
     setLogs([
-      "🚀 Starting L2 transfer proof generation...",
-      stateFile
-        ? `📁 Previous state: ${stateFile.name}`
-        : `🔗 Init TX: ${initTx}`,
-      `👤 Sender L2 Key: ${l2PrivateKey.slice(0, 10)}...`,
-      `👤 Sender L2 Address: ${l2Address}`,
-      `💳 Recipient: ${recipientAddress}`,
-      `💰 Amount: ${amount} ${tokenInfo?.symbol || selectedToken}`,
+      "🚀 Starting proof generation from Synthesizer output...",
+      `📁 Synthesizer output: ${synthesizerOutputFile.name}`,
+      `📂 Extracted directory: ${synthesizerOutputFile.path}`,
     ]);
 
     try {
-      // Get RPC URL from settings
-      const settings = storage.getSettings();
-      const rpcUrl = settings.rpcUrl;
+      // Synthesizer 출력 디렉토리 경로
+      const synthesizerOutputDir = synthesizerOutputFile.path;
 
-      // Determine network (default to sepolia)
-      const network = "sepolia";
+      setLogs((prev) => [
+        ...prev,
+        `🔄 Running prove with synthesizer output...`,
+        `📂 Synthesizer output directory: ${synthesizerOutputDir}`,
+      ]);
 
-      // Generate output directory path
-      const timestamp = Date.now();
-      const outputDir = `./outputs/tx-${timestamp}`;
-
-      // Prepare l2-transfer options
-      const transferOptions: {
-        channelId: string;
-        senderKey: string;
-        recipient: string;
-        amount: string;
-        outputDir: string;
-        rpcUrl: string;
-        network: string;
-        initTx?: string;
-        previousState?: string;
-      } = {
-        channelId,
-        senderKey: l2PrivateKey,
-        recipient: recipientAddress,
-        amount: amount.trim(), // Use natural number as-is
-        outputDir,
-        rpcUrl,
-        network,
-      };
-
-      // Check if state_snapshot.json actually exists
-      // If stateFile exists but has no content, it means state_snapshot.json was not found
-      const hasStateSnapshot =
-        stateFile && stateFile.content && stateFile.content.trim() !== "";
-
-      // Add init-tx if provided (required even when using previous-state)
-      if (initTx) {
-        transferOptions.initTx = initTx;
-        setLogs((prev) => [...prev, `📝 Using init-tx: ${initTx}`]);
-      }
-
-      // Add previous-state if provided (subsequent transfers)
-      if (hasStateSnapshot) {
-        // If it's a ZIP file, path points to extracted directory
-        // Otherwise, path points directly to the state_snapshot.json file
-        const snapshotPath = stateFile.isZip
-          ? `${stateFile.path}/state_snapshot.json`
-          : stateFile.path;
-        transferOptions.previousState = snapshotPath;
-        setLogs((prev) => [
-          ...prev,
-          `📝 Using previous state: ${snapshotPath}`,
-        ]);
-      }
-
-      setLogs((prev) => [...prev, `🔄 Executing synthesizer l2-transfer...`]);
-
-      // Execute l2-transfer
+      // Execute prove only
       const result = await window.electron.invoke(
-        "l2-transfer",
-        transferOptions
+        "run-prover",
+        synthesizerOutputDir
       );
 
       if (result.success) {
         setLogs((prev) => [
           ...prev,
-          "✅ L2 transfer adapter execution completed!",
-          `📁 Output directory: ${result.outputDir}`,
-          `📂 Synthesizer output: ${result.synthesizerOutputDir || "N/A"}`,
-          ...(result.proveOutputDir
-            ? [`📂 Prove output: ${result.proveOutputDir}`]
+          "✅ Proof generation completed successfully!",
+          ...(result.stdout
+            ? result.stdout.split("\n").filter((line: string) => line.trim())
             : []),
-          ...result.output.split("\n").filter((line: string) => line.trim()),
         ]);
 
-        // Store new state snapshot if available
-        if (result.stateSnapshot) {
-          setNewStateSnapshot(result.stateSnapshot);
-          setLogs((prev) => [...prev, "✅ New state snapshot generated"]);
-        }
-
-        // Add prove execution results
-        if (result.proveSuccess !== undefined) {
+        if (result.stderr) {
           setLogs((prev) => [
             ...prev,
-            result.proveSuccess
-              ? "✅ Proof generation completed successfully!"
-              : "⚠️ Proof generation completed with warnings",
-            ...(result.proveOutput
-              ? result.proveOutput
-                  .split("\n")
-                  .filter((line: string) => line.trim())
-              : []),
+            ...result.stderr
+              .split("\n")
+              .filter((line: string) => line.trim())
+              .map((line: string) => `⚠️ ${line}`),
           ]);
-
-          if (result.proveStderr) {
-            setLogs((prev) => [
-              ...prev,
-              ...result.proveStderr
-                .split("\n")
-                .filter((line: string) => line.trim())
-                .map((line: string) => `⚠️ ${line}`),
-            ]);
-          }
         }
 
-        // Store ZIP path if available
+        // Set ZIP file path for download
         if (result.zipPath) {
           setOutputZipPath(result.zipPath);
           setLogs((prev) => [
             ...prev,
-            `📦 ZIP file created with proof: ${result.zipPath}`,
+            `✅ Proof ZIP file created successfully!`,
+            `📂 ZIP file: ${result.zipPath}`,
+          ]);
+        } else {
+          setLogs((prev) => [
+            ...prev,
+            `✅ Proof files generated successfully!`,
+            `📂 Proof output directory: ${result.proveOutputDir || synthesizerOutputDir + "/../proof"}`,
           ]);
         }
 
         setGenerationComplete(true);
       } else {
-        throw new Error(result.error || "L2 transfer failed");
+        throw new Error(result.error || "Proof generation failed");
       }
     } catch (error: any) {
       setLogs((prev) => [
         ...prev,
-        `❌ L2 transfer failed: ${error.message || error}`,
+        `❌ Proof generation failed: ${error.message || error}`,
         error.stderr ? `⚠️  Error details: ${error.stderr}` : "",
       ]);
     } finally {
@@ -911,59 +874,14 @@ const GenerateProof: React.FC = () => {
                 <FileText className="w-5 h-5 text-white" />
               </div>
               <div>
-                <h2 className="text-lg font-bold text-white">State File Upload</h2>
+                <h2 className="text-lg font-bold text-white">
+                  State File Upload
+                </h2>
                 <p className="text-sm text-gray-400">
-                  Upload a ZIP file containing transaction-info.json and state_snapshot.json
+                  Upload a ZIP file containing transaction-info.json and
+                  state_snapshot.json
                 </p>
               </div>
-            </div>
-
-            <div>
-              <label
-                className="block font-medium text-gray-300"
-                style={{ fontSize: "16px", marginBottom: "12px" }}
-              >
-                State File
-              </label>
-              <button
-                onClick={handleStateUpload}
-                className="w-full border-2 border-dashed border-[#4fc3f7]/30 hover:border-[#4fc3f7] bg-[#0a1930]/50 text-gray-300 hover:text-[#4fc3f7] transition-all flex items-center justify-center"
-                style={{ padding: "24px", gap: "12px" }}
-              >
-                <FileText className="w-6 h-6" />
-                <span className="font-semibold" style={{ fontSize: "16px" }}>
-                  {stateFile ? "Change State File" : "Upload State File"}
-                </span>
-              </button>
-              {stateFile && (
-                <div
-                  className="bg-[#0a1930]/50 border border-[#4fc3f7]/30"
-                  style={{ marginTop: "12px", padding: "16px" }}
-                >
-                  <div className="flex items-center" style={{ gap: "12px" }}>
-                    <div
-                      className="bg-green-500 rounded"
-                      style={{ padding: "8px" }}
-                    >
-                      <Check className="w-4 h-4 text-white" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p
-                        className="text-white font-medium truncate"
-                        style={{ fontSize: "15px", marginBottom: "4px" }}
-                      >
-                        {stateFile.name}
-                      </p>
-                      <p
-                        className="text-gray-400 font-mono truncate"
-                        style={{ fontSize: "13px" }}
-                      >
-                        {stateFile.path}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-              )}
             </div>
           </div>
 
@@ -1095,21 +1013,15 @@ const GenerateProof: React.FC = () => {
 
           {/* Proof Generation */}
           <ProofGeneration
-            stateFile={stateFile}
-            l2PrivateKey={l2PrivateKey}
-            onL2PrivateKeyChange={setL2PrivateKey}
-            l2Address={l2Address}
-            isDerivingAddress={isDerivingAddress}
-            recipientAddress={recipientAddress}
-            onRecipientAddressChange={setRecipientAddress}
-            supportedTokens={supportedTokens}
-            selectedToken={selectedToken}
-            onSelectedTokenChange={setSelectedToken}
-            amount={amount}
-            onAmountChange={setAmount}
+            synthesizerOutputFile={synthesizerOutputFile}
+            onSynthesizerOutputUpload={handleSynthesizerOutputUpload}
             isGenerating={isGenerating}
             onGenerate={handleGenerate}
-            transactionInfoLoaded={transactionInfoLoaded}
+            signature={signature}
+            recipientAddress={recipientAddress}
+            amount={amount}
+            selectedToken={selectedToken}
+            channelId={channelId}
           />
 
           {/* Logs Section */}
@@ -1182,17 +1094,19 @@ const GenerateProof: React.FC = () => {
             <ul className="space-y-2 text-sm text-gray-300">
               <li className="flex items-start gap-2">
                 <span className="text-[#4fc3f7] mt-1">•</span>
-                <span>Upload your state file from the channel</span>
+                <span>
+                  Run Synthesizer in your browser to generate circuit files
+                </span>
               </li>
               <li className="flex items-start gap-2">
                 <span className="text-[#4fc3f7] mt-1">•</span>
-                <span>Enter the recipient address and transfer amount</span>
+                <span>Upload the Synthesizer output ZIP file</span>
               </li>
               <li className="flex items-start gap-2">
                 <span className="text-[#4fc3f7] mt-1">•</span>
                 <span>
-                  Click "Generate Proof" to create a new proof for the
-                  transaction
+                  Click "Generate Proof" to create a proof from the Synthesizer
+                  output
                 </span>
               </li>
               <li className="flex items-start gap-2">

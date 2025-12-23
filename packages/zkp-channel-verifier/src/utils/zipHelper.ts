@@ -139,7 +139,6 @@ export function readTransactionInfo(extractedDir: string): {
     console.warn("[zipHelper] transaction-info.json not found in:", contentDir);
     // List files in contentDir for debugging
     try {
-      const { readdirSync } = require("fs");
       const files = readdirSync(contentDir);
       console.log("[zipHelper] Files in contentDir:", files);
     } catch (e) {

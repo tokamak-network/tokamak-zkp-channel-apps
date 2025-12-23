@@ -37,10 +37,8 @@ if (process.platform === "darwin") {
   app.commandLine.appendSwitch("disable-background-timer-throttling");
   app.commandLine.appendSwitch("disable-renderer-backgrounding");
 
-  const originalSafeStorage = require("electron").safeStorage;
-  if (originalSafeStorage) {
-    originalSafeStorage.isEncryptionAvailable = () => false;
-  }
+  // Note: safeStorage is already imported from electron at the top
+  // We can't override it in ES modules, but the command line switches should handle it
 }
 
 const createWindow = () => {
@@ -225,6 +223,22 @@ function setupIpcHandlers() {
           }
         }
 
+        // Try to read channel-info.json for signature
+        let channelInfo = null;
+        const channelInfoPath = path.join(contentDir, "channel-info.json");
+        
+        if (existsSync(channelInfoPath)) {
+          try {
+            const content = readFileSync(channelInfoPath, "utf-8");
+            channelInfo = JSON.parse(content);
+            console.log("[main] Channel info found:", Object.keys(channelInfo));
+          } catch (e) {
+            console.error("[main] Failed to read channel-info.json:", e);
+          }
+        } else {
+          console.log("[main] Channel info: not found");
+        }
+
         return {
           filePath,
           extractedDir: contentDir, // Return content directory (handles single folder case)
@@ -238,6 +252,10 @@ function setupIpcHandlers() {
           // Keep channelInfo for backward compatibility
           channelInfo: finalTransactionInfo
             ? JSON.stringify(finalTransactionInfo)
+            : undefined,
+          // Add channelInfo with signature
+          channelInfoWithSignature: channelInfo
+            ? JSON.stringify(channelInfo)
             : undefined,
         };
       } else if (isDirectory) {
@@ -503,7 +521,9 @@ function setupIpcHandlers() {
   // Run prover only (for already synthesized circuits)
   ipcMain.handle("run-prover", async (event, synthesizerOutputDir: string) => {
     const { runProver } = await import("./utils/binaryRunner");
-    const { resolve } = await import("path");
+    const { resolve, basename, join } = await import("path");
+    const AdmZip = (await import("adm-zip")).default;
+    const { tmpdir } = await import("os");
 
     const proveOutputDir = resolve(synthesizerOutputDir, "../proof");
     fs.mkdirSync(proveOutputDir, { recursive: true });
@@ -514,6 +534,54 @@ function setupIpcHandlers() {
       (data) => event.sender.send("prover-stdout", data),
       (data) => event.sender.send("prover-stderr", data)
     );
+
+    if (result.success) {
+      // Create ZIP file with synthesizer and prove folders
+      try {
+        const zip = new AdmZip();
+        const timestamp = Date.now();
+        const folderName = `channel-proof-${timestamp}`;
+
+        // Add synthesizer files to ZIP under synthesizer/ folder
+        const synthesizerFiles = fs.readdirSync(synthesizerOutputDir);
+        for (const file of synthesizerFiles) {
+          const filePath = join(synthesizerOutputDir, file);
+          const stat = fs.statSync(filePath);
+          if (stat.isFile()) {
+            zip.addLocalFile(filePath, `${folderName}/synthesizer`);
+          }
+        }
+
+        // Add prove files to ZIP under prove/ folder
+        const proveFiles = fs.readdirSync(proveOutputDir);
+        for (const file of proveFiles) {
+          const filePath = join(proveOutputDir, file);
+          const stat = fs.statSync(filePath);
+          if (stat.isFile()) {
+            zip.addLocalFile(filePath, `${folderName}/prove`);
+          }
+        }
+
+        // Write ZIP to temp directory
+        const zipPath = join(tmpdir(), `channel-proof-${timestamp}.zip`);
+        zip.writeZip(zipPath);
+
+        console.log(`[run-prover] Created ZIP file: ${zipPath}`);
+
+        return {
+          ...result,
+          zipPath,
+          proveOutputDir,
+        };
+      } catch (zipError: any) {
+        console.error("[run-prover] Failed to create ZIP:", zipError);
+        return {
+          ...result,
+          proveOutputDir,
+          zipError: zipError.message,
+        };
+      }
+    }
 
     return result;
   });
@@ -625,7 +693,7 @@ function setupIpcHandlers() {
       options: {
         channelId: string;
         initTx?: string;
-        senderKey: string;
+        signature: string;
         recipient: string;
         amount: string;
         previousState?: string;
@@ -657,8 +725,8 @@ function setupIpcHandlers() {
           "l2-transfer",
           "--channel-id",
           options.channelId,
-          "--sender-key",
-          options.senderKey,
+          "--signature",
+          options.signature,
           "--recipient",
           options.recipient,
           "--amount",

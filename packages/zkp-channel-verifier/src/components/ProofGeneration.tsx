@@ -1,41 +1,40 @@
 import React from "react";
-import { Plus, Check, RefreshCw } from "lucide-react";
+import { Plus, Check, ArrowRight, User, Wallet } from "lucide-react";
 
 interface ProofGenerationProps {
-  stateFile: { name: string; path: string } | null;
-  l2PrivateKey: string;
-  onL2PrivateKeyChange: (key: string) => void;
-  l2Address: string;
-  isDerivingAddress: boolean;
-  recipientAddress: string;
-  onRecipientAddressChange: (address: string) => void;
-  supportedTokens: string[];
-  selectedToken: string;
-  onSelectedTokenChange: (token: string) => void;
-  amount: string;
-  onAmountChange: (amount: string) => void;
+  synthesizerOutputFile: { name: string; path: string } | null;
+  onSynthesizerOutputUpload: () => void;
   isGenerating: boolean;
   onGenerate: () => void;
-  transactionInfoLoaded: boolean;
+  // Transaction info from uploaded ZIP
+  signature?: string;
+  recipientAddress?: string;
+  amount?: string;
+  selectedToken?: string;
+  channelId?: string;
+  senderAddress?: string; // From channel-info.json or derived
 }
 
 const ProofGeneration: React.FC<ProofGenerationProps> = ({
-  stateFile,
-  l2PrivateKey,
-  onL2PrivateKeyChange,
-  l2Address,
-  isDerivingAddress,
-  recipientAddress,
-  onRecipientAddressChange,
-  supportedTokens,
-  selectedToken,
-  onSelectedTokenChange,
-  amount,
-  onAmountChange,
+  synthesizerOutputFile,
+  onSynthesizerOutputUpload,
   isGenerating,
   onGenerate,
-  transactionInfoLoaded,
+  signature = "",
+  recipientAddress = "",
+  amount = "",
+  selectedToken = "",
+  channelId = "",
+  senderAddress = "",
 }) => {
+  // Truncate address for display
+  const truncateAddress = (address: string) => {
+    if (!address || address.length < 10) return address;
+    return `${address.slice(0, 6)}...${address.slice(-4)}`;
+  };
+
+  const hasTransactionInfo = signature && recipientAddress && amount;
+
   return (
     <div
       className="bg-gradient-to-b from-[#1a2347] to-[#0a1930] border border-[#4fc3f7] shadow-lg shadow-[#4fc3f7]/20"
@@ -51,188 +50,150 @@ const ProofGeneration: React.FC<ProofGenerationProps> = ({
         <div>
           <h2 className="text-lg font-bold text-white">Proof Generation</h2>
           <p className="text-sm text-gray-400">
-            Transaction details loaded from state file
+            Upload Synthesizer output ZIP file to generate proof
           </p>
         </div>
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-        {/* Sender L2 Private Key (From) */}
+        {/* Synthesizer Output ZIP Upload */}
         <div>
           <label
             className="block font-medium text-gray-300"
             style={{ fontSize: "16px", marginBottom: "12px" }}
           >
-            Sender L2 Private Key (From)
+            Synthesizer Output ZIP File
           </label>
-          <input
-            type="text"
-            value={l2PrivateKey}
-            onChange={(e) => onL2PrivateKeyChange(e.target.value)}
-            placeholder="Upload state file to load private key"
-            readOnly={true}
-            disabled={true}
-            className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all font-mono opacity-70 cursor-not-allowed"
-            style={{ padding: "14px 16px", fontSize: "15px" }}
-          />
+          <div className="flex items-center gap-4">
+            <button
+              onClick={onSynthesizerOutputUpload}
+              className="bg-[#4fc3f7] hover:bg-[#029bee] border border-[#4fc3f7] text-white transition-all"
+              style={{
+                padding: "12px 24px",
+                fontSize: "15px",
+                fontWeight: "600",
+                borderRadius: "4px",
+              }}
+            >
+              Upload ZIP File
+            </button>
+            {synthesizerOutputFile && (
+              <div className="flex-1 bg-[#0a1930] border border-[#4fc3f7]/30 rounded p-3">
+                <div className="text-sm text-gray-300 font-mono">
+                  {synthesizerOutputFile.name}
+                </div>
+                <div className="text-xs text-gray-500 mt-1">
+                  {synthesizerOutputFile.path}
+                </div>
+              </div>
+            )}
+          </div>
           <p
             className="text-gray-400"
             style={{ fontSize: "12px", marginTop: "8px" }}
           >
-            {transactionInfoLoaded
-              ? "Loaded from transaction-info.json"
-              : "Please upload a state file (ZIP) containing transaction-info.json"}
+            {synthesizerOutputFile
+              ? "✅ Synthesizer output ZIP file uploaded"
+              : "Please upload a ZIP file containing Synthesizer output files (instance.json, placementVariables.json, etc.)"}
           </p>
+        </div>
 
-          {/* Derived L2 Address Display */}
-          {isDerivingAddress && (
-            <div
-              className="bg-[#0a1930]/50 border border-[#4fc3f7]/20 flex items-center"
-              style={{
-                marginTop: "12px",
-                padding: "12px 16px",
-                gap: "8px",
-              }}
+        {/* Transaction Info Display (from uploaded ZIP) */}
+        {hasTransactionInfo && (
+          <div
+            className="bg-[#0a1930]/50 border border-[#4fc3f7]/30 rounded"
+            style={{ padding: "20px" }}
+          >
+            <h3
+              className="text-white font-semibold"
+              style={{ fontSize: "15px", marginBottom: "16px" }}
             >
-              <RefreshCw className="w-4 h-4 text-[#4fc3f7] animate-spin" />
-              <span className="text-gray-400 text-sm">
-                Deriving L2 address...
-              </span>
-            </div>
-          )}
-          {!isDerivingAddress && l2Address && (
+              Transaction Details
+            </h3>
+
+            {/* Transfer Visualization */}
             <div
-              className="bg-[#0a1930]/50 border border-[#4fc3f7]/20"
-              style={{ marginTop: "12px", padding: "12px 16px" }}
+              className="flex items-center justify-center"
+              style={{ gap: "16px", marginBottom: "20px" }}
             >
-              <div className="text-xs text-gray-500 mb-1">L2 Address:</div>
-              <div className="font-mono text-sm text-[#4fc3f7] break-all">
-                {l2Address}
+              {/* Sender */}
+              <div className="flex flex-col items-center">
+                <div className="bg-[#4fc3f7]/20 p-3 rounded-full mb-2">
+                  <User className="w-6 h-6 text-[#4fc3f7]" />
+                </div>
+                <span className="text-xs text-gray-400">Sender</span>
+                <span className="text-sm text-white font-mono">
+                  {senderAddress
+                    ? truncateAddress(senderAddress)
+                    : "From Signature"}
+                </span>
+              </div>
+
+              {/* Arrow with Amount */}
+              <div className="flex flex-col items-center">
+                <div className="flex items-center gap-2 bg-green-500/20 px-4 py-2 rounded-full">
+                  <span className="text-green-400 font-bold">
+                    {amount} {selectedToken || "ETH"}
+                  </span>
+                  <ArrowRight className="w-4 h-4 text-green-400" />
+                </div>
+              </div>
+
+              {/* Recipient */}
+              <div className="flex flex-col items-center">
+                <div className="bg-[#4fc3f7]/20 p-3 rounded-full mb-2">
+                  <Wallet className="w-6 h-6 text-[#4fc3f7]" />
+                </div>
+                <span className="text-xs text-gray-400">Recipient</span>
+                <span className="text-sm text-white font-mono">
+                  {truncateAddress(recipientAddress)}
+                </span>
               </div>
             </div>
-          )}
-        </div>
 
-        {/* Recipient Address (To) */}
-        <div>
-          <label
-            className="block font-medium text-gray-300"
-            style={{ fontSize: "16px", marginBottom: "12px" }}
-          >
-            Recipient L2 Address (To)
-          </label>
-          <input
-            type="text"
-            value={recipientAddress}
-            onChange={(e) => onRecipientAddressChange(e.target.value)}
-            placeholder="Upload state file to load recipient address"
-            readOnly={true}
-            disabled={true}
-            className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all font-mono opacity-70 cursor-not-allowed"
-            style={{ padding: "14px 16px", fontSize: "15px" }}
-          />
-          <p
-            className="text-gray-400"
-            style={{ fontSize: "12px", marginTop: "8px" }}
-          >
-            {transactionInfoLoaded
-              ? "Loaded from transaction-info.json"
-              : "Please upload a state file (ZIP) containing transaction-info.json"}
-          </p>
-        </div>
-
-        {/* Token Selection */}
-        <div>
-          <label
-            className="block font-medium text-gray-300"
-            style={{ fontSize: "16px", marginBottom: "12px" }}
-          >
-            Select Token
-          </label>
-          <div className="flex flex-wrap" style={{ gap: "12px" }}>
-            {supportedTokens.map((token) => (
-              <button
-                key={token}
-                onClick={() => onSelectedTokenChange(token)}
-                className={`border-2 rounded transition-all ${
-                  selectedToken === token
-                    ? "bg-[#4fc3f7] border-[#4fc3f7] text-white"
-                    : "bg-[#0a1930] border-[#4fc3f7]/30 text-gray-400 hover:border-[#4fc3f7]"
-                }`}
-                style={{
-                  padding: "12px 24px",
-                  fontSize: "15px",
-                  fontWeight: "600",
-                }}
-              >
-                {token}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Transfer Amount */}
-        <div>
-          <label
-            className="block font-medium text-gray-300"
-            style={{ fontSize: "16px", marginBottom: "12px" }}
-          >
-            Transfer Amount
-          </label>
-          <div className="relative">
-            <input
-              type="text"
-              value={amount}
-              onChange={(e) => onAmountChange(e.target.value)}
-              placeholder="Upload state file to load amount"
-              readOnly={true}
-              disabled={true}
-              className="w-full bg-[#0a1930] text-white border border-[#4fc3f7]/30 focus:border-[#4fc3f7] focus:outline-none transition-all opacity-70 cursor-not-allowed"
-              style={{
-                padding: "14px 16px",
-                paddingRight: "80px",
-                fontSize: "15px",
-              }}
-            />
-            <div
-              className="absolute top-1/2 -translate-y-1/2 bg-[#4fc3f7]/20 rounded border border-[#4fc3f7]/30"
-              style={{ right: "12px", padding: "8px 16px" }}
-            >
-              <span
-                className="text-[#4fc3f7] font-semibold"
-                style={{ fontSize: "15px" }}
-              >
-                {selectedToken}
-              </span>
+            {/* Details Grid */}
+            <div className="grid grid-cols-2 gap-4">
+              {channelId && (
+                <div className="bg-[#0a1930] p-3 rounded">
+                  <span className="text-xs text-gray-400 block">
+                    Channel ID
+                  </span>
+                  <span className="text-sm text-white font-mono">
+                    {channelId}
+                  </span>
+                </div>
+              )}
+              <div className="bg-[#0a1930] p-3 rounded">
+                <span className="text-xs text-gray-400 block">Recipient</span>
+                <span
+                  className="text-sm text-white font-mono break-all"
+                  style={{ fontSize: "12px" }}
+                >
+                  {recipientAddress}
+                </span>
+              </div>
+              {signature && (
+                <div className="bg-[#0a1930] p-3 rounded col-span-2">
+                  <span className="text-xs text-gray-400 block">Signature</span>
+                  <span
+                    className="text-sm text-white font-mono break-all"
+                    style={{ fontSize: "11px" }}
+                  >
+                    {signature.slice(0, 40)}...{signature.slice(-20)}
+                  </span>
+                </div>
+              )}
             </div>
           </div>
-          <p
-            className="text-gray-400"
-            style={{ fontSize: "12px", marginTop: "8px" }}
-          >
-            {transactionInfoLoaded
-              ? "Loaded from transaction-info.json"
-              : "Please upload a state file (ZIP) containing transaction-info.json"}
-          </p>
-        </div>
+        )}
 
         {/* Generate Proof Button */}
-        <div style={{ marginTop: "32px" }}>
+        <div style={{ marginTop: "16px" }}>
           <button
             onClick={onGenerate}
-            disabled={
-              !stateFile ||
-              !l2Address ||
-              !recipientAddress ||
-              !amount.trim() ||
-              isGenerating
-            }
+            disabled={!synthesizerOutputFile || isGenerating}
             className={`w-full flex items-center justify-center transition-all ${
-              !stateFile ||
-              !l2Address ||
-              !recipientAddress ||
-              !amount.trim() ||
-              isGenerating
+              !synthesizerOutputFile || isGenerating
                 ? "bg-[#0a1930]/50 border border-[#4fc3f7]/20 text-gray-500 cursor-not-allowed"
                 : "bg-[#4fc3f7] hover:bg-[#029bee] border border-[#4fc3f7] text-white shadow-lg shadow-[#4fc3f7]/30"
             }`}
@@ -247,11 +208,9 @@ const ProofGeneration: React.FC<ProofGenerationProps> = ({
               <span>
                 {isGenerating ? "Generating Proof..." : "Generate Proof"}
               </span>
-              {!isGenerating &&
-                stateFile &&
-                l2Address &&
-                recipientAddress &&
-                amount.trim() && <Check className="w-5 h-5" />}
+              {!isGenerating && synthesizerOutputFile && (
+                <Check className="w-5 h-5" />
+              )}
             </div>
           </button>
         </div>
