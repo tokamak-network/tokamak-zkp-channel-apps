@@ -1,13 +1,11 @@
 # Icons Directory
 
-앱 아이콘 파일들이 위치합니다.
+This directory contains app icon files.
 
-## 필요한 파일들
+## Required Files
 
-- `app-icon.icns`: macOS용 앱 아이콘
-- `app-icon.png`: Windows/Linux용 앱 아이콘
-- `favicon.ico`: Windows용 아이콘
+- `app-icon.icns`: App icon for macOS
+- `app-icon.png`: App icon for Windows/Linux
+- `favicon.ico`: Icon for Windows
 
-playground-hub의 아이콘 파일들을 참고하거나,
-새로운 아이콘을 디자인하여 사용할 수 있습니다.
-
+You can refer to icon files from playground-hub or design new icons to use.

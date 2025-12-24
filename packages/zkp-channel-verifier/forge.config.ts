@@ -27,6 +27,21 @@ const config: ForgeConfig = {
     },
     // Include binary files, assets, and public folder in the app package
     extraResource: ["src/binaries", "src/assets", "public"],
+    // macOS code signing configuration
+    osxSign: {
+      identity: "Developer ID Application: Jehyuk Jang (B5WMFK82H9)",
+      optionsForFile: (filePath: string) => {
+        return {
+          entitlements: "src/entitlements.plist",
+        };
+      },
+    },
+    osxNotarize: {
+      tool: "notarytool",
+      appleId: process.env.APPLE_ID || "",
+      appleIdPassword: process.env.APPLE_ID_PASSWORD || "",
+      teamId: process.env.APPLE_TEAM_ID || "",
+    },
   },
   rebuildConfig: {},
   makers: [

@@ -114,8 +114,8 @@ echo ""
 
 print_step "3️⃣ Setting up Apple Developer credentials for notarization..."
 
-# Set the path to .env file (in package directory)
-ENV_FILE="packages/zkp-channel-verifier/.env"
+# Set the path to .env file (in current directory)
+ENV_FILE=".env"
 
 # Check if .env file exists and has all required credentials
 if [ -f "$ENV_FILE" ]; then
@@ -222,9 +222,7 @@ fi
 echo ""
 print_step "5️⃣ Creating environment configuration..."
 
-# Ensure package directory exists
-PACKAGE_DIR="packages/zkp-channel-verifier"
-mkdir -p "$PACKAGE_DIR"
+# Ensure we're in the right directory (no need to create, we're already here)
 
 # Create .env file with credentials (preserve existing if it has the right values)
 if [ -f "$ENV_FILE" ] && grep -q "APPLE_ID_PASSWORD=" "$ENV_FILE" && [ -n "$(grep 'APPLE_ID_PASSWORD=' "$ENV_FILE" | cut -d'=' -f2)" ]; then
@@ -249,8 +247,8 @@ print_success ".env file created with notarization credentials at $ENV_FILE"
 echo ""
 print_step "6️⃣ Updating forge.config.ts with certificate identity..."
 
-# Set the correct path to forge.config.ts
-FORGE_CONFIG="packages/zkp-channel-verifier/forge.config.ts"
+# Set the correct path to forge.config.ts (in current directory)
+FORGE_CONFIG="forge.config.ts"
 
 if [ ! -f "$FORGE_CONFIG" ]; then
     print_error "forge.config.ts not found at $FORGE_CONFIG"
@@ -386,17 +384,7 @@ export APPLE_ID="$APPLE_ID"
 export APPLE_ID_PASSWORD="$APPLE_ID_PASSWORD"
 export APPLE_TEAM_ID="$APPLE_TEAM_ID"
 
-# Change to the package directory
-PACKAGE_DIR="packages/zkp-channel-verifier"
-if [ ! -d "$PACKAGE_DIR" ]; then
-    print_error "Package directory not found: $PACKAGE_DIR"
-    exit 1
-fi
-
-print_step "Changing to package directory: $PACKAGE_DIR"
-cd "$PACKAGE_DIR" || exit 1
-
-# Run the signed build with notarization
+# Run the signed build with notarization (already in the package directory)
 if APPLE_ID="$APPLE_ID" APPLE_ID_PASSWORD="$APPLE_ID_PASSWORD" APPLE_TEAM_ID="$APPLE_TEAM_ID" npm run make:signed; then
     echo ""
     print_success "Build and notarization completed successfully!"
@@ -439,9 +427,48 @@ if APPLE_ID="$APPLE_ID" APPLE_ID_PASSWORD="$APPLE_ID_PASSWORD" APPLE_TEAM_ID="$A
         fi
     fi
     
+    # Sign and notarize DMG
+    if [ -n "$DMG_PATH" ]; then
+        echo ""
+        print_step "9️⃣ Signing and notarizing DMG..."
+        
+        # Sign the DMG
+        print_step "Signing DMG with Developer ID..."
+        if codesign --force --sign "$IDENTITY" "$DMG_PATH"; then
+            print_success "DMG signed successfully"
+        else
+            print_error "Failed to sign DMG"
+        fi
+        
+        # Notarize the DMG
+        print_step "Submitting DMG for notarization (this may take a few minutes)..."
+        if xcrun notarytool submit "$DMG_PATH" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_ID_PASSWORD" --wait; then
+            print_success "DMG notarization completed"
+            
+            # Staple the notarization ticket
+            print_step "Stapling notarization ticket to DMG..."
+            if xcrun stapler staple "$DMG_PATH"; then
+                print_success "DMG stapling completed"
+            else
+                print_warning "DMG stapling failed - users may need internet on first launch"
+            fi
+        else
+            print_error "DMG notarization failed"
+        fi
+        
+        # Verify DMG notarization
+        echo ""
+        echo "🔍 DMG Notarization Verification:"
+        if spctl --assess --type open --context context:primary-signature -v "$DMG_PATH" 2>&1 | grep -q "accepted"; then
+            print_success "DMG is properly signed and notarized"
+        else
+            print_warning "DMG verification inconclusive"
+        fi
+    fi
+    
     # List all generated files
     echo ""
-    print_step "📁 Generated distribution files:"
+    print_step "🔟 Generated distribution files:"
     if [ -n "$APP_PATH" ]; then
         echo "   • App Bundle: $APP_PATH"
     fi
